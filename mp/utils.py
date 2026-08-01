@@ -4,6 +4,7 @@ import subprocess
 import requests
 import zipfile
 from multiprocessing.dummy import DummyProcess
+from concurrent.futures import ThreadPoolExecutor
 import platform
 from os import chmod, makedirs
 
@@ -49,6 +50,14 @@ def runcmd(cmd):
                                 )
     return (ret.returncode, ret.stdout.decode('utf-8'))
 
+def checkUrl(url: str, timeout: int = 5) -> bool:
+    """HEAD check whether a url is reachable (follow redirects)."""
+    try:
+        r = requests.head(url, timeout=timeout, allow_redirects=True)
+        return r.ok
+    except:
+        return False
+
 def getReleaseList(url: str = DEFAULT_MAGISK_API_URL, isproxy: bool=False, proxyaddr: str="127.0.0.1:7890", isjsdelivr:bool=True, log=stderr):
     buf = url.split('/')
     user = buf[-3]
@@ -67,25 +76,39 @@ def getReleaseList(url: str = DEFAULT_MAGISK_API_URL, isproxy: bool=False, proxy
     data = r.json()
     dlink = {}
 
+    def pick(name, js_url, fallback_url):
+        # jsdelivr only mirrors magisk-files up to a certain version;
+        # fall back to the GitHub release asset url when unavailable
+        if isjsdelivr and checkUrl(js_url):
+            return (name, js_url)
+        return (name, fallback_url)
+
     if url == DEFAULT_MAGISK_API_URL:
-        for i in data:
-            tag_name = i['tag_name']
-            for j in i['assets']:
-                if j['name'].startswith("Magisk") and j['name'].endswith(r".apk"):
-                    if "Manager" in j['name']: continue # skip magisk manager apk
-                    if isjsdelivr:
-                        dlink.update({j['name'] : magiskTag2jsdelivr(user, repo, tag_name, j['name'])})
-                    else:
-                        dlink.update({j['name'] : j['browser_download_url']})
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = []
+            for i in data:
+                tag_name = i['tag_name']
+                for j in i['assets']:
+                    if j['name'].startswith("Magisk") and j['name'].endswith(r".apk"):
+                        if "Manager" in j['name']: continue # skip magisk manager apk
+                        js_url = magiskTag2jsdelivr(user, repo, tag_name, j['name'])
+                        futures.append(ex.submit(pick, j['name'], js_url, j['browser_download_url']))
+            for f in futures:
+                k, v = f.result()
+                dlink[k] = v
     else: # maybe delta magisk
-        for i in data:
-            tag_name = i['tag_name']
-            for j in i['assets']:
-                if j['name'].endswith(r".apk") and j['name'].startswith('app'):
-                    if isjsdelivr:
-                        dlink.update({tag_name + j['name'].lstrip('app') : magiskTag2jsdelivr(user, repo, tag_name, j['name'])})
-                    else:
-                        dlink.update({tag_name + j['name'].lstrip('app') : j['browser_download_url']})
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            futures = []
+            for i in data:
+                tag_name = i['tag_name']
+                for j in i['assets']:
+                    if j['name'].endswith(r".apk") and j['name'].startswith('app'):
+                        js_url = magiskTag2jsdelivr(user, repo, tag_name, j['name'])
+                        name = tag_name + j['name'].lstrip('app')
+                        futures.append(ex.submit(pick, name, js_url, j['browser_download_url']))
+            for f in futures:
+                k, v = f.result()
+                dlink[k] = v
     return dlink
 
 def magiskTag2jsdelivr(user, repo, tag, fname):
@@ -123,7 +146,7 @@ def downloadFile(url: str, to: str, isproxy: bool = False, proxy:str="127.0.0.1:
         'http': proxy,
         'https': proxy,
     }
-    p = lambda now, total: int((now/total)*100)
+    p = lambda now, total: int((now/total)*100) if total > 0 else 0
     chunk_size = 10240
     try:
         r = requests.get(url, stream=True, allow_redirects=True,
@@ -131,8 +154,11 @@ def downloadFile(url: str, to: str, isproxy: bool = False, proxy:str="127.0.0.1:
     except:
         print(langget('internet connect faild or cannot connect target url'), file=log)
         return False
+    if not r.ok:
+        print(langget('download faild'), file=log)
+        return False
     print(f"- {langget('start download')}[{url}] -> [{to}]", file=log)
-    total_size = int(r.headers['content-length'])
+    total_size = int(r.headers.get('content-length', 0))
     now = 0
     with open(to, 'wb') as f:
         for chunk in r.iter_content(chunk_size=chunk_size):
@@ -140,10 +166,11 @@ def downloadFile(url: str, to: str, isproxy: bool = False, proxy:str="127.0.0.1:
                 before = now
                 f.write(chunk)
                 now += chunk_size
-                if now > before:
+                if now > before and progress is not None:
                     progress.set(p(now, total_size))
     print(langget('download complete'), file=log)
-    progress.set(0)
+    if progress is not None:
+        progress.set(0)
     return True
 
 def thdownloadFile(*args):

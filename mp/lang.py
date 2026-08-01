@@ -53,6 +53,7 @@ class Language:
         'internet connect faild or cannot connect target url': "- 网络异常或无法连接到目标链接...",
         'start download': "开始下载",
         'download complete': "下载完成",
+        'download faild': "- 下载失败，请检查网络或更换下载源",
         'start decompress needed': "- 开始解压需要的文件...",
 
         'cannot initilazed with magiskboot': "- magiskboot文件不存在，无法完成初始化",
@@ -132,6 +133,7 @@ class Language:
         'internet connect faild or cannot connect target url': "- Connect Failed...",
         'start download': "Start download",
         'download complete': "Downlaod Complete",
+        'download faild': "- Download failed, please check network or change mirror",
         'start decompress needed': "- Start decompress needed...",
 
         'cannot initilazed with magiskboot': "- Cannot initialized with magiskboot",
