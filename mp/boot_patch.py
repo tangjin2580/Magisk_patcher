@@ -4,14 +4,9 @@ from os import unlink
 from os import name as osname
 from os.path import isfile, isdir
 import logging
-from hashlib import sha1
 from shutil import copyfile, rmtree
 
 from .lang import Language, langget
-
-def getsha1(filename):
-    with open(filename, 'rb') as f:
-        return sha1(f.read()).hexdigest()
 
 def cp(src, dest):
     if isfile(src):
@@ -55,6 +50,8 @@ class BootPatcher(object):
 
         self.log = log
 
+        self.vendor_boot = False
+
         self.__check()
         self.__prepare_env()
 
@@ -64,7 +61,7 @@ class BootPatcher(object):
             return False
 
     def __prepare_env(self):
-        bool2str = lambda x: "true" if x else "flase"
+        bool2str = lambda x: "true" if x else "false"
         self.env = {
             "KEEPVERITY": bool2str(self.keep_verity),
             "KEEPFORCEENCRYPT": bool2str(self.keep_forceencrypt),
@@ -75,10 +72,6 @@ class BootPatcher(object):
            "MAGISKBOOT_WINSUP_NOCASE": "1"
         }
 
-        # This maybe no need
-        #for i in self.env:
-        #    putenv(i, self.env[i])
-    
     def __execv(self, cmd:list):
         """
         Run magiskboot command, already include magiskboot
@@ -104,6 +97,23 @@ class BootPatcher(object):
         logging.info(ret.stdout.decode(encoding="utf-8"))
         return ret.returncode, ret.stdout.decode(encoding="utf-8")
     
+    def __find_ramdisk(self):
+        """
+        Locate the ramdisk within unpacked boot image, matching
+        the official boot_patch.sh search order.
+        return (path, status, skip_backup)
+        """
+        for path in (
+            "ramdisk.cpio",
+            "vendor_ramdisk/init_boot.cpio",
+            "vendor_ramdisk/ramdisk.cpio",
+        ):
+            if isfile(path):
+                err, _ = self.__execv(["cpio", path, "test"])
+                return path, err, ""
+        # No ramdisk found, create one from scratch
+        return "ramdisk.cpio", 0, "#"
+
     def patch(self, bootimg:str) -> bool:
         # Check bootimg exist
         if not isfile(bootimg):
@@ -117,96 +127,88 @@ class BootPatcher(object):
 
         match err:
             case 0: pass
-            case 1:
-                print(langget('unknow/unsupport format'), file=self.log)
-                return False
             case 2:
                 print(langget('chromeos format boot'), file=self.log)
                 print(langget('not support yet'))
                 return False
+            case 3:
+                print(langget('vendor boot image detected'), file=self.log)
+                self.vendor_boot = True
             case _:
                 print(langget('unable to unpack boot'), file=self.log)
                 return False
 
         print(langget('check ramdisk status'), file=self.log)
-        if isfile("ramdisk.cpio"):
-            err, ret = self.__execv(["cpio", "ramdisk.cpio", "test"])
-            status = err
-            skip_backup = ""
-        else:
-            status = 0
-            skip_backup = "#"
+        ramdisk, status, skip_backup = self.__find_ramdisk()
 
         sha = ""
         match (status & 3):
             case 0: # Stock boot
                 print(langget('detect original boot'), file=self.log)
-                sha = getsha1(bootimg)
+                err, ret = self.__execv(["sha1", bootimg])
+                if err == 0:
+                    sha = ret.rstrip("\n")
                 cp(bootimg, "stock_boot.img")
-                cp("ramdisk.cpio", "ramdisk.cpio.orig")
+                cp(ramdisk, "ramdisk.cpio.orig")
             case 1: # Magisk patched
                 print(langget('detect magisk patched boot'), file=self.log)
-                err, ret = self.__execv(["cpio", "ramdisk.cpio", "extract .backup/.magisk config.orig", "restore"])
-                cp("ramdisk.cpio", "ramdisk.cpio.orig")
+                err, ret = self.__execv([
+                    "cpio", ramdisk, "extract .backup/.magisk config.orig", "restore"
+                ])
+                cp(ramdisk, "ramdisk.cpio.orig")
                 rm("stock_boot.img")
             case 2: # Unsupported
                 print(langget('boot patched by unknow program'), file=self.log)
                 print(langget('please resotre original boot'), file=self.log)
                 return False
-        
-        # Sony device
-        init = "init"
-        if not (status&4) == 0:
-            init = "init.real"
-        
+
         if isfile("config.orig"):
             sha = grep_prop("SHA1", "config.orig")
             rm("config.orig")
         
         print(langget('patch ramdisk'), file=self.log)
 
-        skip32 = "#"
-        skip64 = "#"
+        if not isfile("magisk"):
+            print(langget('magisk binary not found'), file=self.log)
+            return False
 
-        if isfile("magisk64"):
-            self.__execv(["compress=xz", "magisk64", "magisk64.xz"])
-            skip64 = ""
-        if isfile("magisk32"):
-            self.__execv(["compress=xz", "magisk32", "magisk32.xz"])
-            skip32 = ""
+        # Compress to save precious ramdisk space
+        self.__execv(["compress=xz", "magisk", "magisk.xz"])
+        self.__execv(["compress=xz", "stub.apk", "stub.xz"])
+        if isfile("init-ld"):
+            self.__execv(["compress=xz", "init-ld", "init-ld.xz"])
         
-        stub = False
-        if isfile("stub.apk"):
-            stub = True
-        
-        if stub:
-            self.__execv(["compress=xz", "stub.apk", "stub.xz"])
         with open("config", 'w') as config:
             config.write(
                 f"KEEPVERITY={self.env['KEEPVERITY']}" + "\n" +
                 f"KEEPFORCEENCRYPT={self.env['KEEPFORCEENCRYPT']}" + "\n" +
-                f"RECOVERYMODE={self.env['RECOVERYMODE']}" + "\n")
+                f"RECOVERYMODE={self.env['RECOVERYMODE']}" + "\n" +
+                f"VENDORBOOT={'true' if self.vendor_boot else 'false'}" + "\n")
             if sha != "":
                 config.write(f"SHA1={sha}\n")
         
-        err, _ = self.__execv([
-            "cpio", "ramdisk.cpio",
-            f"add 0750 {init} magiskinit",
+        cpio_cmds = [
+            "add 0750 init magiskinit",
             "mkdir 0750 overlay.d",
             "mkdir 0750 overlay.d/sbin",
-            f"{skip32} add 0644 overlay.d/sbin/magisk32.xz magisk32.xz",
-            f"{skip64} add 0644 overlay.d/sbin/magisk64.xz magisk64.xz",
-            "add 0644 overlay.d/sbin/stub.xz stub.xz" if stub else "",
+            "add 0644 overlay.d/sbin/magisk.xz magisk.xz",
+            "add 0644 overlay.d/sbin/stub.xz stub.xz",
+        ]
+        if isfile("init-ld.xz"):
+            cpio_cmds.append("add 0644 overlay.d/sbin/init-ld.xz init-ld.xz")
+        cpio_cmds += [
             "patch",
             f"{skip_backup} backup ramdisk.cpio.orig",
             "mkdir 000 .backup",
             "add 000 .backup/.magisk config",
-        ])
+        ]
+
+        err, _ = self.__execv(["cpio", ramdisk, *cpio_cmds])
         if err != 0:
             print(langget('unable to patch ramdisk'), file=self.log)
             return False
         
-        rm("ramdisk.cpio.orig", "config", "magisk32.xz", "magisk64.xz", "stub.xz")
+        rm("ramdisk.cpio.orig", "config", "magisk.xz", "stub.xz", "init-ld.xz")
         
         for dt in "dtb", "kernel_dtb", "extra":
             if isfile(dt):
@@ -235,6 +237,14 @@ class BootPatcher(object):
                 "hexpatch", "kernel", "821B8012", "E2FF8F12"
             ])
             if err == 0: patchedkernel = True
+            # Disable Samsung PROCA
+            # proca_config -> proca_magisk
+            err, _ = self.__execv([
+                "hexpatch", "kernel",
+                "70726F63615F636F6E66696700",
+                "70726F63615F6D616769736B00"
+            ])
+            if err == 0: patchedkernel = True
             if self.legacysar:
                 err, _ = self.__execv([
                     "hexpatch", "kernel",
@@ -258,7 +268,7 @@ class BootPatcher(object):
 
     def cleanup(self):
         rmlist = [
-        "magisk32", "magisk32.xz", "magisk64", "magisk64.xz", "magiskinit", "stub.apk"
+        "magisk", "magisk.xz", "magiskinit", "stub.apk", "stub.xz", "init-ld", "init-ld.xz"
         ]
         rm(*rmlist)
         print(langget('cleanup'), file=self.log)

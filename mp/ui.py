@@ -8,6 +8,7 @@ import os.path as op
 from os import name as osname
 from sys import version as pyversion
 from sys import argv
+import sys
 import webbrowser
 import logging
 from multiprocessing.dummy import DummyProcess
@@ -47,12 +48,19 @@ INTRODUCE = """\
 \t- magiskboot on mingw32 from https://github.com/svoboda18/magiskboot
 \t- customtkinter ui界面库，有一说一确实好看
 """ %(f'{OS} ({REL})' if REL else OS, ARCH, VERSION, AUTHOR, LICENSE, pyversion, getcwd(), AUTHOR)
+def bundle_dir() -> str:
+    # Locate bundled resources: _MEIPASS when frozen by PyInstaller,
+    # otherwise the directory of this script
+    if getattr(sys, 'frozen', False):
+        return op.abspath(getattr(sys, '_MEIPASS', op.dirname(argv[0])))
+    return op.abspath(op.dirname(argv[0]))
+
 if OS == 'windows':
-    prebuilt_magiskboot = op.abspath(op.join(op.dirname(argv[0]), "bin", OS, ARCH, "magiskboot" + EXT))
+    prebuilt_magiskboot = op.abspath(op.join(bundle_dir(), "bin", OS, ARCH, "magiskboot" + EXT))
 elif OS == 'macos':
-    prebuilt_magiskboot = op.abspath(op.join(op.dirname(argv[0]), "bin", OS, REL, ARCH, "magiskboot" + EXT))
+    prebuilt_magiskboot = op.abspath(op.join(bundle_dir(), "bin", OS, REL, ARCH, "magiskboot" + EXT))
 else:
-    prebuilt_magiskboot = op.abspath(op.join(op.dirname(argv[0]), "bin", "magiskboot"+EXT))
+    prebuilt_magiskboot = op.abspath(op.join(bundle_dir(), "bin", "magiskboot"+EXT))
 
 def visit_customtkinter_website(event):
     webbrowser.open("https://customtkinter.tomschimansky.com")

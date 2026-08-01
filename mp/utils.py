@@ -5,7 +5,7 @@ import requests
 import zipfile
 from multiprocessing.dummy import DummyProcess
 import platform
-from os import chmod
+from os import chmod, makedirs
 
 from .lang import Language, langget
 
@@ -162,15 +162,6 @@ def parseMagiskApk(apk: str, arch:["arm64", "arm", "x86", "x86_64"]="arm64", log
             case "arm":
                 ret = "armeabi-v7a"
         return ret
-    
-    def archto32(a):
-        ret = a
-        match a:
-            case "arm64-v8a":
-                ret = "armeabi-v7a"
-            case "x86_64":
-                ret = "x86"
-        return ret
 
     def saveto(bytes, path):
         with open(path, 'wb') as f:
@@ -178,28 +169,31 @@ def parseMagiskApk(apk: str, arch:["arm64", "arm", "x86", "x86_64"]="arm64", log
 
     print(langget('start decompress needed'), file=log)
     arch = archconv(arch)
-    os, _, p = retTypeAndMachine()
-    pp = "x86_64"
-    if p == "aarch64":
-        pp = "arm64-v8a"
-    elif p == "arm":
-        pp = "armeabi-v7a"
+    _, _, machine = retTypeAndMachine()
+    host_abi = "x86_64"
+    if machine == "aarch64":
+        host_abi = "arm64-v8a"
+    elif machine == "arm":
+        host_abi = "armeabi-v7a"
     with zipfile.ZipFile(apk) as z:
         for l in z.filelist:
-            # 26.0+
-            if "stub.apk" in l.filename:
+            # 26.0+: stub is bundled under assets/
+            if l.filename == "assets/stub.apk":
                 saveto(z.read(l), "stub.apk")
             # Save a platform magiskboot into bin if linux
-            if os!='windows' and osname !='nt':
-                if f"lib/{pp}/libmagiskboot.so" in l.filename:
+            if osname != 'nt':
+                if f"lib/{host_abi}/libmagiskboot.so" == l.filename:
+                    makedirs("bin", exist_ok=True)
                     saveto(z.read(l), "bin/magiskboot")
                     chmod("bin/magiskboot", 0o755)
 
-            if f"lib/{arch}/libmagiskinit.so" in l.filename:
-                saveto(z.read(f"lib/{archto32(arch)}/libmagisk32.so"), "magisk32")
-                if arch in ["arm64-v8a", "x86_64"]:
-                    saveto(z.read(f"lib/{arch}/libmagisk64.so"), "magisk64")
-                saveto(z.read(f"lib/{arch}/libmagiskinit.so"), "magiskinit")
+            if f"lib/{arch}/libmagiskinit.so" == l.filename:
+                saveto(z.read(l), "magiskinit")
+            # Single unified magisk binary (v26.0+)
+            if f"lib/{arch}/libmagisk.so" == l.filename:
+                saveto(z.read(l), "magisk")
+            if f"lib/{arch}/libinit-ld.so" == l.filename:
+                saveto(z.read(l), "init-ld")
 
 if __name__ == '__main__':
     print(getReleaseList(url=DELTA_MAGISK_API_URL))
