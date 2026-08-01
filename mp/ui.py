@@ -100,7 +100,7 @@ class MagiskPatcherUI(ctk.CTk):
         self.ismirror = ctk.BooleanVar(value=False)
         self.mirror = ctk.StringVar(value="")
 
-        self.isjsdelivr = ctk.BooleanVar(value=True)
+        self.isjsdelivr = ctk.BooleanVar(value=False)
 
         self.uselocal = ctk.BooleanVar(value=True)
         self.usedeltamagisk = ctk.BooleanVar(value=False)

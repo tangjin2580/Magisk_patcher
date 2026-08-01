@@ -76,27 +76,21 @@ def getReleaseList(url: str = DEFAULT_MAGISK_API_URL, isproxy: bool=False, proxy
     data = r.json()
     dlink = {}
 
-    def pick(name, js_url, fallback_url):
-        # jsdelivr only mirrors magisk-files up to a certain version;
-        # fall back to the GitHub release asset url when unavailable
-        if isjsdelivr and checkUrl(js_url):
-            return (name, js_url)
-        return (name, fallback_url)
-
     if url == DEFAULT_MAGISK_API_URL:
-        with ThreadPoolExecutor(max_workers=8) as ex:
-            futures = []
-            for i in data:
-                tag_name = i['tag_name']
-                for j in i['assets']:
-                    if j['name'].startswith("Magisk") and j['name'].endswith(r".apk"):
-                        if "Manager" in j['name']: continue # skip magisk manager apk
-                        js_url = magiskTag2jsdelivr(user, repo, tag_name, j['name'])
-                        futures.append(ex.submit(pick, j['name'], js_url, j['browser_download_url']))
-            for f in futures:
-                k, v = f.result()
-                dlink[k] = v
+        # Official Magisk: always use the GitHub release asset direct link
+        for i in data:
+            tag_name = i['tag_name']
+            for j in i['assets']:
+                if j['name'].startswith("Magisk") and j['name'].endswith(r".apk"):
+                    if "Manager" in j['name']: continue # skip magisk manager apk
+                    dlink.update({j['name'] : j['browser_download_url']})
     else: # maybe delta magisk
+        def pick(name, js_url, fallback_url):
+            # jsdelivr only mirrors magisk-files up to a certain version;
+            # fall back to the GitHub release asset url when unavailable
+            if isjsdelivr and checkUrl(js_url):
+                return (name, js_url)
+            return (name, fallback_url)
         with ThreadPoolExecutor(max_workers=8) as ex:
             futures = []
             for i in data:
