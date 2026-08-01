@@ -6,6 +6,7 @@ from io import BytesIO
 from os import getcwd, makedirs, walk
 import os.path as op
 from os import name as osname
+from shutil import copyfile
 from sys import version as pyversion
 from sys import argv
 import sys
@@ -358,6 +359,9 @@ class MagiskPatcherUI(ctk.CTk):
         download_refresh_button = ctk.CTkButton(download_config_frame, text=self.langget('refresh list'), command=self.refresh_magisk)
         download_refresh_button.pack(side='bottom', fill='x', padx=10, pady=5)
 
+        download_upload_button = ctk.CTkButton(download_config_frame, text=self.langget('upload local apk'), command=self.upload_local_apk)
+        download_upload_button.pack(side='bottom', fill='x', padx=10, pady=5)
+
         download_config_frame.pack(side='left', fill='both', padx=5, pady=5, expand='no')
         self.download_list_frame.pack(side='left', fill='both', padx=5, pady=5, expand='yes')
 
@@ -418,6 +422,21 @@ class MagiskPatcherUI(ctk.CTk):
                                          self)
         th = DummyProcess(target=patcher.patch, args=[self.bootimg.get(),])
         th.start()
+
+    def upload_local_apk(self):
+        fname = ctk.filedialog.askopenfilename(
+            title=self.langget('select local magisk apk'),
+            filetypes=[("APK files", "*.apk"), ("All files", "*.*")])
+        if not fname:
+            return
+        makedirs("prebuilt", exist_ok=True)
+        dest = op.join("prebuilt", op.basename(fname))
+        if op.abspath(fname) != op.abspath(dest):
+            copyfile(fname, dest)
+        self.magisk_select_int.set(op.basename(fname))
+        self.magisk_select.set(f"- {self.langget('current magisk')} [{op.basename(fname)}]")
+        print(f"- {self.langget('upload local apk done')}[{dest}]", file=self)
+        self.change_frame_patcher()
 
     def refresh_magisk(self):
         def download(magisk: str):
