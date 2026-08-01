@@ -129,8 +129,10 @@ def getMagiskApkVersion(fname: str) -> str | None:
         if not valid_flag: return None
     return magisk_ver_code
 
-def convertVercode2Ver(value: str) -> str:
-    return value[0:2] + b"." + value[2:3]
+def convertVercode2Ver(value) -> str:
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", "ignore")
+    return value[0:2] + "." + value[2:3]
 
 def downloadFile(url: str, to: str, isproxy: bool = False, proxy:str="127.0.0.1:7890", progress=None, log=stderr):
     """

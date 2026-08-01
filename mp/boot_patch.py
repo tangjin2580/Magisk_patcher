@@ -2,11 +2,20 @@ from sys import stderr
 import subprocess
 from os import unlink
 from os import name as osname
-from os.path import isfile, isdir
+from os.path import isfile, isdir, basename, join, expanduser
 import logging
 from shutil import copyfile, rmtree
 
 from .lang import Language, langget
+
+def get_download_dir():
+    """Return the system download directory, fallback to home."""
+    home = expanduser("~")
+    for d in ("Downloads", "下载"):
+        p = join(home, d)
+        if isdir(p):
+            return p
+    return home
 
 def cp(src, dest):
     if isfile(src):
@@ -72,7 +81,7 @@ class BootPatcher(object):
            "MAGISKBOOT_WINSUP_NOCASE": "1"
         }
 
-    def __execv(self, cmd:list):
+    def __execv(self, cmd:list, timeout:int=300):
         """
         Run magiskboot command, already include magiskboot
         return returncode and output
@@ -87,13 +96,20 @@ class BootPatcher(object):
         else:
             creationflags = 0
         logging.info("Run command : \n"+ " ".join(full))
-        ret = subprocess.run(full,
-                            stderr=subprocess.STDOUT,
-                            stdout=subprocess.PIPE,
-                            shell=False,
-                            env=self.env,
-                            creationflags=creationflags,
-                            )
+        try:
+            ret = subprocess.run(full,
+                                stderr=subprocess.STDOUT,
+                                stdout=subprocess.PIPE,
+                                shell=False,
+                                env=self.env,
+                                creationflags=creationflags,
+                                timeout=timeout,
+                                )
+        except subprocess.TimeoutExpired:
+            msg = langget('command timeout') % " ".join(full)
+            logging.error(msg)
+            print(msg, file=self.log)
+            return -1, "timeout"
         logging.info(ret.stdout.decode(encoding="utf-8"))
         return ret.returncode, ret.stdout.decode(encoding="utf-8")
     
@@ -135,7 +151,10 @@ class BootPatcher(object):
                 print(langget('vendor boot image detected'), file=self.log)
                 self.vendor_boot = True
             case _:
-                print(langget('unable to unpack boot'), file=self.log)
+                msg = langget('unable to unpack boot')
+                if ret and "timeout" not in ret:
+                    msg += "\n" + ret.strip()
+                print(msg, file=self.log)
                 return False
 
         print(langget('check ramdisk status'), file=self.log)
@@ -264,6 +283,12 @@ class BootPatcher(object):
 
         self.cleanup()
         print(langget('done'), file=self.log)
+        try:
+            dest = join(get_download_dir(), "patched-" + basename(bootimg))
+            copyfile("new-boot.img", dest)
+            print(langget('saved to download dir') % dest, file=self.log)
+        except Exception as e:
+            print(langget('save to download dir failed') % str(e), file=self.log)
         return True
 
     def cleanup(self):
