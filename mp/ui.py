@@ -3,7 +3,7 @@ from tkinter.ttk import Progressbar
 from .magisk_logo import rawdata as logodata
 from PIL import Image
 from io import BytesIO
-from os import getcwd, makedirs, walk
+from os import getcwd, makedirs, walk, listdir
 import os.path as op
 from os import name as osname
 from shutil import copyfile
@@ -59,9 +59,26 @@ def bundle_dir() -> str:
 if OS == 'windows':
     prebuilt_magiskboot = op.abspath(op.join(bundle_dir(), "bin", OS, ARCH, "magiskboot" + EXT))
 elif OS == 'macos':
-    prebuilt_magiskboot = op.abspath(op.join(bundle_dir(), "bin", OS, REL, ARCH, "magiskboot" + EXT))
+    # macOS version directories are named 11/12/13...; fall back to the
+    # highest available version when the running macOS is not bundled.
+    mac_dir = op.join(bundle_dir(), "bin", OS, REL, ARCH)
+    base_mac = op.join(bundle_dir(), "bin", OS)
+    if not op.isfile(op.join(mac_dir, "magiskboot" + EXT)):
+        cands = []
+        try:
+            for d in listdir(base_mac):
+                if op.isfile(op.join(base_mac, d, ARCH, "magiskboot" + EXT)):
+                    cands.append(d)
+        except OSError:
+            pass
+        if cands:
+            cands.sort(key=lambda s: [int(p) for p in s.split('.') if p.isdigit()] or [0])
+            mac_dir = op.join(base_mac, cands[-1], ARCH)
+    prebuilt_magiskboot = op.abspath(op.join(mac_dir, "magiskboot" + EXT))
 else:
-    prebuilt_magiskboot = op.abspath(op.join(bundle_dir(), "bin", "magiskboot"+EXT))
+    # Linux: magiskboot is extracted from the APK (statically linked
+    # host-arch binary) into the current working dir, see parseMagiskApk.
+    prebuilt_magiskboot = op.abspath(op.join(getcwd(), "bin", "magiskboot" + EXT))
 
 def visit_customtkinter_website(event):
     webbrowser.open("https://customtkinter.tomschimansky.com")
@@ -134,13 +151,13 @@ class MagiskPatcherUI(ctk.CTk):
         if OS in ['windows', 'macos']:
             print(f"- Windows/macOS Use prebuilt magiskboot.", file=self)
             print(f"\tFile should be here: {prebuilt_magiskboot}", file=self)
-            if not prebuilt_magiskboot:
+            if not op.isfile(prebuilt_magiskboot):
                 print("- Error: Cannot find prebuilt magiskboot.", file=self)
                 print("\tFix this to patch boot image correctly.", file=self)
-                print(f"{prebuilt_magiskboot}")
         elif OS == 'linux':
-            print(f"- Linux use magisk.apk inner magiskboot insted prebuilt magiskboot.", file=self)
-            print(f"\t It will extract when patching a boot image.", file=self)
+            print(f"- Linux use magisk.apk inner magiskboot (host arch).", file=self)
+            print(f"\tIt is extracted to: {prebuilt_magiskboot}", file=self)
+            print("\tIt will extract when patching a boot image.", file=self)
         
     # as stdout, you can print(..., file=self)
     def write(self, *args):

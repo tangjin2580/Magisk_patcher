@@ -1,20 +1,8 @@
-name: Build Windows EXE
+# DEPRECATED: multi-platform build moved to build-desktop.yml.
+# Keep this file only for history; it never triggers anymore.
+name: Build Windows EXE (deprecated)
 
-on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Release version, e.g. 4.1.0 (tag will be v4.1.0)'
-        required: false
-        default: '4.1.0'
-      prerelease:
-        description: 'Mark this release as a pre-release'
-        type: boolean
-        required: false
-        default: false
+on: {}
 
 permissions:
   contents: write
