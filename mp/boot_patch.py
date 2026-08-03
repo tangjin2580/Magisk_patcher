@@ -1,4 +1,5 @@
 from sys import stderr
+import os
 import subprocess
 from os import unlink
 from os import name as osname
@@ -92,16 +93,23 @@ class BootPatcher(object):
         ]
 
         if osname == 'nt':
-            creationflags = subprocess.CREATE_NO_WINDOW
+            # SEM_FAILCRITICALERRORS prevents the "DLL not found" system
+            # dialog from popping up and hanging the patch indefinitely.
+            creationflags = subprocess.CREATE_NO_WINDOW | 0x00008000
         else:
             creationflags = 0
+        # Merge flags on top of the real system environment. Replacing the
+        # whole env (as done previously) breaks magiskboot on Windows where
+        # it needs SystemRoot/PATH to load its runtime DLLs.
+        full_env = os.environ.copy()
+        full_env.update(self.env)
         logging.info("Run command : \n"+ " ".join(full))
         try:
             ret = subprocess.run(full,
                                 stderr=subprocess.STDOUT,
                                 stdout=subprocess.PIPE,
                                 shell=False,
-                                env=self.env,
+                                env=full_env,
                                 creationflags=creationflags,
                                 timeout=timeout,
                                 )
@@ -110,8 +118,14 @@ class BootPatcher(object):
             logging.error(msg)
             print(msg, file=self.log)
             return -1, "timeout"
-        logging.info(ret.stdout.decode(encoding="utf-8"))
-        return ret.returncode, ret.stdout.decode(encoding="utf-8")
+        except OSError as e:
+            msg = langget('cannot run magiskboot') % (self.magiskboot, str(e))
+            logging.error(msg)
+            print(msg, file=self.log)
+            return -1, str(e)
+        out = ret.stdout.decode(encoding="utf-8", errors="replace")
+        logging.info(out)
+        return ret.returncode, out
     
     def __find_ramdisk(self):
         """
@@ -166,7 +180,8 @@ class BootPatcher(object):
                 print(langget('detect original boot'), file=self.log)
                 err, ret = self.__execv(["sha1", bootimg])
                 if err == 0:
-                    sha = ret.rstrip("\n")
+                    lines = [l.strip() for l in ret.splitlines() if l.strip()]
+                    sha = lines[0] if lines else ""
                 cp(bootimg, "stock_boot.img")
                 cp(ramdisk, "ramdisk.cpio.orig")
             case 1: # Magisk patched
