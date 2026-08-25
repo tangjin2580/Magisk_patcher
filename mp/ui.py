@@ -165,6 +165,11 @@ class MagiskPatcherUI(ctk.CTk):
         self.recoverymode = ctk.BooleanVar(value=False)
         self.legacysar = ctk.BooleanVar(value=False)
 
+        # Optional Magisk v26.1+ preinit device hint, e.g. "sda20". When left
+        # blank the line is omitted from .backup/. magisk and magiskinit falls
+        # back to auto-detecting the preinit partition. See PREINITDEVICE.md.
+        self.preinit_device = ctk.StringVar(value="")
+
         self.progress = ctk.DoubleVar(value=0)
         self.progress_text = ctk.StringVar(value="0%")
         self.loglevel = ctk.IntVar(value=logging.WARNING)
@@ -401,6 +406,22 @@ class MagiskPatcherUI(ctk.CTk):
         legacy_sar_flag = ctk.CTkSwitch(config_frame, text=self.langget('legacy sar'), variable=self.legacysar)
         legacy_sar_flag.grid(column=1, row=2, sticky='nsew', padx=5, pady=5, columnspan=4)
 
+        # Row 3: optional preinit device (Magisk v26.1+).
+        preinit_device_label = ctk.CTkLabel(config_frame, text=self.langget('preinit device'))
+        preinit_device_label.grid(column=1, row=3, padx=5, pady=5, sticky='e')
+        preinit_device_entry = ctk.CTkEntry(config_frame,
+                                            textvariable=self.preinit_device,
+                                            placeholder_text=self.langget('preinit device placeholder'),
+                                            width=140)
+        preinit_device_entry.grid(column=2, row=3, sticky='w', padx=5, pady=5)
+        preinit_device_hint = ctk.CTkLabel(config_frame,
+                                           text=self.langget('preinit device hint'),
+                                           text_color=('gray50', 'gray70'),
+                                           font=ctk.CTkFont(size=11),
+                                           wraplength=380,
+                                           justify='left')
+        preinit_device_hint.grid(column=3, row=3, columnspan=2, sticky='w', padx=5, pady=5)
+
         config_frame.pack(side="top", fill="x", expand="no", padx=5, pady=5)
 
         confirm_frame = ctk.CTkFrame(self.patcher_frame, corner_radius=5)
@@ -554,7 +575,8 @@ class MagiskPatcherUI(ctk.CTk):
                                                  self.recoverymode.get(),
                                                  self.legacysar.get(),
                                                  self.progress,
-                                                 qlog)
+                                                 qlog,
+                                                 preinit_device=self.preinit_device.get().strip())
                 ok = patcher.patch(self.bootimg.get())
                 result_key = 'done' if ok else 'faild to repack boot image'
                 qlog(f"\n*** {self.langget(result_key)} ***")
