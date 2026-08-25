@@ -86,6 +86,7 @@ class Language:
         'faild to repack boot image': "- 打包boot镜像失败",
         'done': "- 完成！",
         'cleanup': "- 清理文件",
+        'footer verify failed': "! magiskboot 改写了 footer original_image_size: %s -> %s",
 
 
 
@@ -173,6 +174,7 @@ class Language:
         'faild to repack boot image': "- Unable to repack boot image",
         'done': "- Done !",
         'cleanup': "- Cleanup...",
+        'footer verify failed': "! magiskboot rewrote footer original_image_size: %s -> %s",
     }
 
 def langget(key) -> str:

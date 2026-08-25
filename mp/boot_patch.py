@@ -48,6 +48,7 @@ class BootPatcher(object):
         legacysar: bool = False,
         progress=None,
         log=stderr,
+        preinit_device: str = "",
     ):
         self.magiskboot = magiskboot
 
@@ -57,6 +58,10 @@ class BootPatcher(object):
         self.recovery_mode = recovery_mode
         self.legacysar = legacysar
         self.progress = progress
+        # Optional PREINITDEVICE hint (e.g. "sda20"). When empty the line is
+        # omitted from .backup/.magisk; magiskinit v26.1+ then skips the
+        # preinit partition mirror mount and falls back to auto-detection.
+        self.preinit_device = preinit_device
 
         self.log = log
 
@@ -212,12 +217,15 @@ class BootPatcher(object):
         if isfile("init-ld"):
             self.__execv(["compress=xz", "init-ld", "init-ld.xz"])
         
-        with open("config", 'w') as config:
+        # newline='' forces LF only, matching the official Magisk app output.
+        with open("config", 'w', newline='') as config:
             config.write(
                 f"KEEPVERITY={self.env['KEEPVERITY']}" + "\n" +
                 f"KEEPFORCEENCRYPT={self.env['KEEPFORCEENCRYPT']}" + "\n" +
                 f"RECOVERYMODE={self.env['RECOVERYMODE']}" + "\n" +
                 f"VENDORBOOT={'true' if self.vendor_boot else 'false'}" + "\n")
+            if self.preinit_device:
+                config.write(f"PREINITDEVICE={self.preinit_device}\n")
             if sha != "":
                 config.write(f"SHA1={sha}\n")
         
@@ -296,6 +304,13 @@ class BootPatcher(object):
             print(langget('faild to repack boot image'), file=self.log)
             return False
 
+        # Sanity-check the AVB footer: magiskboot copies the original
+        # vbmeta/footer from <bootimg> into new-boot.img and updates only
+        # vbmeta_offset; the original_image_size field must still describe
+        # the *original* image size (not the patched one). If a future
+        # magiskboot changes this behaviour, we want to know.
+        self.__verify_footer(bootimg)
+
         self.cleanup()
         print(langget('done'), file=self.log)
         try:
@@ -305,6 +320,27 @@ class BootPatcher(object):
         except Exception as e:
             print(langget('save to download dir failed') % str(e), file=self.log)
         return True
+
+    def __verify_footer(self, orig_bootimg: str) -> None:
+        """Compare the AVB footer of new-boot.img against orig_bootimg. The
+        original_image_size field should describe the ORIGINAL image size, not
+        the patched one; warn if a future magiskboot changes that contract.
+        """
+        try:
+            import struct
+            orig = open(orig_bootimg, 'rb').read()
+            new = open("new-boot.img", 'rb').read()
+            # AVB footer: magic(4) ver_major(4) ver_minor(4) orig_size(8) vbmeta_off(8) vbmeta_size(8) - big-endian
+            o_footer = struct.unpack_from('>4sIIQQQ', orig, len(orig) - 64)
+            n_footer = struct.unpack_from('>4sIIQQQ', new, len(new) - 64)
+            if o_footer[0] != b'AVBf' or n_footer[0] != b'AVBf':
+                return  # not AVB-signed, nothing to check
+            if o_footer[3] != n_footer[3]:
+                print(langget('footer verify failed') % (o_footer[3], n_footer[3]),
+                      file=self.log)
+        except Exception:
+            # Verification is best-effort; never fail patch because of it
+            pass
 
     def cleanup(self):
         rmlist = [
