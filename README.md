@@ -191,9 +191,6 @@ pyinstaller --noconfirm --clean --onefile --windowed \
   --add-data "bin/logo.ico;bin" \
   --add-data "bin/logo.png;bin" \
   --add-data "bin/splash.png;bin" \
-  --add-data "bin/alipay.png;bin" \
-  --add-data "bin/wechat.png;bin" \
-  --add-data "bin/zfbhb.png;bin" \
   --add-data "PREINITDEVICE.md;." \
   magiskpatcher.py
 ```
@@ -242,11 +239,3 @@ clash-style) or *Use jsdelivr* mirror.
 - [CustomTkinter](https://customtkinter.tomschimansky.com) — pretty Tkinter
 
 GPLv3. See [LICENSE](./LICENSE).
-
-## Donate
-
-Scan the QR codes in `bin/`:
-
-- WeChat: ![](bin/wechat.png)
-- Alipay: ![](bin/alipay.png)
-- Alipay Red Packet: ![](bin/zfbhb.png)

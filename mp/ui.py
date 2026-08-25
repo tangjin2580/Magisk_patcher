@@ -87,26 +87,10 @@ class _QueueLogger:
         pass
 
 VERSION = "4.2.0"
-AUTHOR = "affggh"
-TITLE = "Magisk Patcher v%s by %s" % (VERSION, AUTHOR)
+TITLE = "Magisk Patcher v%s" % VERSION
 WIDTH = 960
 HEIGHT = 580
 OS, REL, ARCH = utils.retTypeAndMachine()
-LICENSE = "GPLv3"
-INTRODUCE = """\
-- Native OS    \t: %s
-- Native Arch  \t: %s
-- Version      \t: %s
-- Author       \t: %s
-- License      \t: %s
-- PythonVersion : %s
-- Work Dir     \t: %s
-- 介绍：
-\tMagisk Patcher 是由 %s 开发的用来在桌面系统上修补手机magisk的一个简单的小程序，基于官方的magiskboot
-- 感谢:
-\t- magiskboot on mingw32 from https://github.com/svoboda18/magiskboot
-\t- customtkinter ui界面库，有一说一确实好看
-""" %(f'{OS} ({REL})' if REL else OS, ARCH, VERSION, AUTHOR, LICENSE, pyversion, getcwd(), AUTHOR)
 def bundle_dir() -> str:
     # Locate bundled resources: _MEIPASS when frozen by PyInstaller,
     # otherwise the directory of this script
@@ -140,9 +124,6 @@ else:
 
 def visit_customtkinter_website(event):
     webbrowser.open("https://customtkinter.tomschimansky.com")
-
-def visit_magisk_website(event):
-    webbrowser.open("https://github.com/topjohnwu/Magisk")
 
 class MagiskPatcherUI(ctk.CTk):
     def __init__(self, *args):
@@ -293,7 +274,6 @@ class MagiskPatcherUI(ctk.CTk):
         self.navigation_label = ctk.CTkLabel(
             self.navigation_frame, image=self.logo, compound="left", text=""
         )
-        self.navigation_label.bind("<Button-1>", visit_magisk_website)
         self.navigation_label.pack(side="top", fill="x")
 
         self.patcher_frame_button = ctk.CTkButton(
@@ -324,20 +304,6 @@ class MagiskPatcherUI(ctk.CTk):
             command=self.change_frame_download,
         )
         self.download_frame_button.pack(side="top", fill="x")
-        self.other_frame_button = ctk.CTkButton(
-            self.navigation_frame,
-            height=30,
-            text=self.langget('Other'),
-            fg_color="transparent",
-            text_color=("gray10", "gray90"),
-            hover_color=("gray70", "gray30"),
-            corner_radius=0,
-            anchor="w",
-            border_spacing=10,
-            font=ctk.CTkFont(size=20),
-            command=self.change_frame_other,
-        )
-        self.other_frame_button.pack(side="top", fill="x")
 
         self.theme_select_button = ctk.CTkSegmentedButton(
             self.navigation_frame,
@@ -367,7 +333,6 @@ class MagiskPatcherUI(ctk.CTk):
         self.download_frame = ctk.CTkFrame(
             self, corner_radius=0, fg_color="transparent"
         )
-        self.other_frame = ctk.CTkFrame(self, corner_radius=0, fg_color="transparent")
 
         file_select_frame = ctk.CTkFrame(self.patcher_frame, corner_radius=5)
         file_select_label = ctk.CTkLabel(file_select_frame, text=self.langget('boot img'))
@@ -557,36 +522,26 @@ class MagiskPatcherUI(ctk.CTk):
         download_config_frame.pack(side='left', fill='both', padx=5, pady=5, expand='no')
         self.download_list_frame.pack(side='left', fill='both', padx=5, pady=5, expand='yes')
 
-        # other frame
-        other_frame = ctk.CTkFrame(self.other_frame)
-        other_introduce_label = ctk.CTkButton(other_frame, state='disable', text=self.langget('introduce'), fg_color=('grey78', 'grey23'), text_color=('black', 'grey85'))
-        other_introduce_label.pack(side='top', padx=5, pady=5, fill='x')
-        other_introduce_logo = ctk.CTkLabel(other_frame, text="        Magisk Patcher", font=ctk.CTkFont(size=30, weight='bold'), image=ctk.CTkImage(Image.open(BytesIO(_load_logo_bytes() or b'')), size=(240,100)), compound='left', anchor='sw')
-        other_introduce_logo.pack(side='top', fill='x', anchor='w')
-        other_introduce_full = ctk.CTkTextbox(other_frame, font=ctk.CTkFont("console"), height=160)
-        other_introduce_full.insert('end', INTRODUCE)
-        other_introduce_full.configure(state='disable')
-        other_introduce_full.pack(side='top', padx=5, pady=5, fill='both', anchor='w', expand='yes')
-        #other_introduce_longlabel = ctk.CTkLabel()
-        other_button_frame = ctk.CTkFrame(other_frame)
-        other_visit_button = ctk.CTkButton(other_button_frame, text=self.langget('vist github'), command=lambda: webbrowser.open("https://github.com/affggh/magisk_patcher"))
-        other_visit_button.grid(column=0, row=0, padx=5, pady=5)
+        # other frame ( deleted along with the donate/about page )
+        # Log level + UI scaling controls live at the bottom of the nav frame.
+        settings_frame = ctk.CTkFrame(self.navigation_frame, corner_radius=0)
 
-        loglevel_label = ctk.CTkLabel(other_button_frame, text=self.langget('log level'))
-        loglevel_label.grid(column=1, row=0, padx=5, pady=5)
+        loglevel_label = ctk.CTkLabel(settings_frame, text=self.langget('log level'))
+        loglevel_label.pack(side='left', padx=(5, 2), pady=5)
+        loglevel_slide_bar = ctk.CTkSlider(settings_frame, from_=logging.DEBUG, to=logging.CRITICAL,
+                                            number_of_steps=4, width=80,
+                                            variable=self.loglevel, command=self.set_log_level)
+        loglevel_slide_bar.set(logging.WARN)  # Default loglevel
+        loglevel_slide_bar.pack(side='left', padx=2, pady=5)
+        ctk.CTkLabel(settings_frame, textvariable=self.loglevel, width=30).pack(side='left', padx=2, pady=5)
 
-        loglevel_slide_bar = ctk.CTkSlider(other_button_frame, from_=logging.DEBUG, to=logging.CRITICAL, number_of_steps=4, variable=self.loglevel, command=self.set_log_level)
-        loglevel_slide_bar.grid(column=2, row=0, padx=5, pady=5)
-        loglevel_slide_bar.set(logging.WARN) # Default loglevel
-        ctk.CTkLabel(other_button_frame, textvariable=self.loglevel).grid(column=3, row=0, padx=5, pady=5)
-
-        ctk.CTkLabel(other_button_frame, text=self.langget('scaling')+":").grid(column=4, row=0, padx=(5,0), pady=5)
-        scaling_bar = ctk.CTkOptionMenu(other_button_frame, values=["0.75", "0.8", "1.0", "1.25", "1.5", "2"], command=self.ui_scaling_event)
+        ctk.CTkLabel(settings_frame, text=self.langget('scaling') + ':').pack(side='left', padx=(8, 2), pady=5)
+        scaling_bar = ctk.CTkOptionMenu(settings_frame, values=["0.75", "0.8", "1.0", "1.25", "1.5", "2"],
+                                        width=70, command=self.ui_scaling_event)
         scaling_bar.set("1.0")
-        scaling_bar.grid(column=5, row=0, padx=5, pady=5)
-        other_button_frame.pack(side='top', padx=5, pady=5, fill='x', expand='no')
+        scaling_bar.pack(side='left', padx=2, pady=5)
 
-        other_frame.pack(side='top', padx=5, pady=5, fill='both', expand='yes')
+        settings_frame.pack(side='bottom', padx=5, pady=2, fill='x')
 
         self._change_frame_byname("patcher")
 
@@ -813,9 +768,6 @@ class MagiskPatcherUI(ctk.CTk):
         self.download_frame_button.configure(
             fg_color=("gray75", "gray25") if name == "download" else "transparent"
         )
-        self.other_frame_button.configure(
-            fg_color=("gray75", "gray25") if name == "other" else "transparent"
-        )
 
         if name == "patcher":
             self.patcher_frame.grid(row=0, column=1, sticky="nsew")
@@ -827,18 +779,11 @@ class MagiskPatcherUI(ctk.CTk):
         else:
             self.download_frame.grid_forget()
 
-        if name == "other":
-            self.other_frame.grid(row=0, column=1, sticky="nsew")
-        else:
-            self.other_frame.grid_forget()
-
     def change_frame_patcher(self):
         self._change_frame_byname("patcher")
 
     def change_frame_download(self):
         self._change_frame_byname("download")
-
-    def change_frame_other(self):
         self._change_frame_byname("other")
 
     def ui_scaling_event(self, value):
