@@ -1,6 +1,5 @@
 import customtkinter as ctk
 from tkinter.ttk import Progressbar
-from .magisk_logo import rawdata as logodata
 from PIL import Image
 from io import BytesIO
 from os import getcwd, makedirs, walk, listdir
@@ -13,9 +12,33 @@ import sys
 import webbrowser
 import logging
 from multiprocessing.dummy import DummyProcess
+from queue import Queue, Empty
+from threading import Event
 
 from . import utils
 from . import boot_patch
+
+# Logo source: prefer bundled bin/logo.png on disk (lighter source), fall
+# back to the inline PNG bytes if the file is missing (e.g. unusual setups).
+try:
+    from .magisk_logo import rawdata as _fallback_logodata
+except Exception:
+    _fallback_logodata = None
+
+def _load_logo_bytes():
+    """Load the bundled Magisk logo PNG from disk instead of inlining 228 KB into source."""
+    candidates = [
+        op.join(bundle_dir(), "bin", "logo.png"),
+        op.join(getcwd(), "bin", "logo.png"),
+    ]
+    for p in candidates:
+        if op.isfile(p):
+            try:
+                with open(p, "rb") as f:
+                    return f.read()
+            except OSError:
+                continue
+    return _fallback_logodata
 
 # multi lang support
 from .lang import Language
@@ -27,6 +50,40 @@ if osname == 'nt':
     EXT = ".exe"
 else:
     EXT = ""
+
+class _DualProgress:
+    """Adapter that mirrors a download progress value into two tk.Variable
+    objects: a numeric bar (0-100) and a percent text label. Lets downloadFile
+    stay agnostic about how the UI exposes progress.
+    """
+    __slots__ = ("_bar", "_text")
+    def __init__(self, bar, text):
+        self._bar = bar
+        self._text = text
+    def set(self, pct: int):
+        try:
+            pct = int(pct)
+        except (TypeError, ValueError):
+            return
+        if pct < 0: pct = 0
+        elif pct > 100: pct = 100
+        self._bar.set(pct)
+        self._text.set(f"{pct}%")
+
+class _QueueLogger:
+    """File-like sink that pushes strings onto a thread-safe Queue instead of
+    writing directly to Tk widgets. The main thread drains via _drain_log_queue.
+    """
+    __slots__ = ("_q",)
+    def __init__(self, q: Queue):
+        self._q = q
+    def write(self, *args):
+        try:
+            self._q.put(" ".join(str(a) for a in args))
+        except Exception:
+            pass
+    def flush(self):
+        pass
 
 VERSION = "4.1.0"
 AUTHOR = "affggh"
@@ -96,7 +153,7 @@ class MagiskPatcherUI(ctk.CTk):
         self.lang = ctk.StringVar(value=Language.supports[0])
         self.lang_dict = getattr(Language, self.lang.get())
 
-        self.logo = ctk.CTkImage(Image.open(BytesIO(logodata), "r"), size=(240, 100))
+        self.logo = ctk.CTkImage(Image.open(BytesIO(_load_logo_bytes() or b''), "r"), size=(240, 100))
         self.bootimg = ctk.StringVar()
         self.arch = ctk.StringVar()
         self.magisk_select = ctk.StringVar(value=self.langget('magisk is not select'))
@@ -109,7 +166,13 @@ class MagiskPatcherUI(ctk.CTk):
         self.legacysar = ctk.BooleanVar(value=False)
 
         self.progress = ctk.DoubleVar(value=0)
+        self.progress_text = ctk.StringVar(value="0%")
         self.loglevel = ctk.IntVar(value=logging.WARNING)
+        # Cross-thread log queue: workers put() messages; main thread drains.
+        self._log_queue = Queue()
+        # Background patch worker state.
+        self._patch_done = Event()
+        self._patch_ok = [False]  # single-element list for thread-safe write
 
         # download
         self.isproxy = ctk.BooleanVar(value=False)
@@ -127,6 +190,9 @@ class MagiskPatcherUI(ctk.CTk):
         self.magisk_list = []
 
         self.__setup_widgets()
+
+        # Start the queue-drain loop so workers can safely log to the UI.
+        self.after(100, self._drain_log_queue)
 
         # initial
 
@@ -161,8 +227,48 @@ class MagiskPatcherUI(ctk.CTk):
         
     # as stdout, you can print(..., file=self)
     def write(self, *args):
-        self.textbox.insert('end', " ".join([str(i) for i in args]))
-        self.textbox.yview('end')
+        msg = " ".join(str(a) for a in args)
+        if not hasattr(self, "_log_buf"):
+            self._log_buf = []
+        self._log_buf.append(msg)
+        # Coalesce high-frequency log writes (one Tk update per ~50ms)
+        try:
+            self.after(50, self._flush_log)
+        except Exception:
+            # 'after' fails if called from a non-main thread; flush inline
+            self._flush_log()
+
+    def _flush_log(self):
+        buf = getattr(self, "_log_buf", None)
+        if not buf:
+            return
+        try:
+            self.textbox.insert('end', "".join(buf))
+            # Cap to ~1000 lines to bound memory in long sessions
+            line_count = int(self.textbox.index('end-1c').split('.')[0])
+            if line_count > 1000:
+                self.textbox.delete('1.0', f'{line_count - 1000}.0')
+            self.textbox.yview('end')
+        finally:
+            self._log_buf.clear()
+
+    def _drain_log_queue(self):
+        """Drain messages enqueued from background workers (thread-safe)."""
+        try:
+            while True:
+                msg = self._log_queue.get_nowait()
+                if msg is None:
+                    break
+                self._log_buf.append(msg)
+        except Empty:
+            pass
+        if self._log_buf:
+            self._flush_log()
+        # Reschedule
+        try:
+            self.after(100, self._drain_log_queue)
+        except Exception:
+            pass
 
     def flush(self): # void flush function
         pass
@@ -317,9 +423,8 @@ class MagiskPatcherUI(ctk.CTk):
         progress_bar.pack(side='left', expand='yes', padx=5, fill='x')
 
 
-        progress_process = ctk.CTkLabel(progress_frame, textvariable=self.progress, width=25, anchor='e')
+        progress_process = ctk.CTkLabel(progress_frame, textvariable=self.progress_text, width=40, anchor='e')
         progress_process.pack(side='left', padx=5)
-        ctk.CTkLabel(progress_frame, text="%").pack(side='left', padx=(0, 5))
 
         progress_frame.grid(row=1, column=1, sticky='ew')
 
@@ -386,7 +491,7 @@ class MagiskPatcherUI(ctk.CTk):
         other_frame = ctk.CTkFrame(self.other_frame)
         other_introduce_label = ctk.CTkButton(other_frame, state='disable', text=self.langget('introduce'), fg_color=('grey78', 'grey23'), text_color=('black', 'grey85'))
         other_introduce_label.pack(side='top', padx=5, pady=5, fill='x')
-        other_introduce_logo = ctk.CTkLabel(other_frame, text="        Magisk Patcher", font=ctk.CTkFont(size=30, weight='bold'), image=ctk.CTkImage(Image.open(BytesIO(logodata)), size=(240,100)), compound='left', anchor='sw')
+        other_introduce_logo = ctk.CTkLabel(other_frame, text="        Magisk Patcher", font=ctk.CTkFont(size=30, weight='bold'), image=ctk.CTkImage(Image.open(BytesIO(_load_logo_bytes() or b'')), size=(240,100)), compound='left', anchor='sw')
         other_introduce_logo.pack(side='top', fill='x', anchor='w')
         other_introduce_full = ctk.CTkTextbox(other_frame, font=ctk.CTkFont("console"), height=160)
         other_introduce_full.insert('end', INTRODUCE)
@@ -419,26 +524,62 @@ class MagiskPatcherUI(ctk.CTk):
         if not op.isfile(self.bootimg.get()):
             print(self.langget('please select a exist boot image'), file=self)
             return
-        
-        if not op.isfile(op.join("prebuilt", self.magisk_select_int.get())):
+
+        apk_name = self.magisk_select_int.get()
+        if not apk_name:
+            print(self.langget('please select a valid magisk apk'), file=self)
+            return
+        apk_path = op.join("prebuilt", apk_name)
+        if not op.isfile(apk_path):
             print(self.langget('please select a valid magisk apk'), file=self)
             return
 
-        magisk_version = utils.getMagiskApkVersion(op.join("prebuilt", self.magisk_select_int.get()))
-        print(f"{self.langget('detect select magisk version is')} [{str(utils.convertVercode2Ver(magisk_version))}]", file=self)
+        # Reset completion state.
+        self._patch_done.clear()
+        self._patch_ok[0] = False
 
-        utils.parseMagiskApk(op.join("prebuilt", self.magisk_select_int.get()), arch=self.arch.get(), log=self)
+        def do_patch():
+            # Use a queue for log output to avoid cross-thread Tk widget access.
+            qlog = _QueueLogger(self._log_queue)
+            try:
+                magisk_version = utils.getMagiskApkVersion(apk_path)
+                qlog(f"{self.langget('detect select magisk version is')} [{str(utils.convertVercode2Ver(magisk_version))}]")
 
-        patcher = boot_patch.BootPatcher(prebuilt_magiskboot,
-                                         self.keep_verity.get(),
-                                         self.keep_forceencrypt.get(),
-                                         self.patchvbmeta_flag.get(),
-                                         self.recoverymode.get(),
-                                         self.legacysar.get(),
-                                         self.progress,
-                                         self)
-        th = DummyProcess(target=patcher.patch, args=[self.bootimg.get(),])
-        th.start()
+                utils.parseMagiskApk(apk_path, arch=self.arch.get(), log=qlog)
+
+                patcher = boot_patch.BootPatcher(prebuilt_magiskboot,
+                                                 self.keep_verity.get(),
+                                                 self.keep_forceencrypt.get(),
+                                                 self.patchvbmeta_flag.get(),
+                                                 self.recoverymode.get(),
+                                                 self.legacysar.get(),
+                                                 self.progress,
+                                                 qlog)
+                ok = patcher.patch(self.bootimg.get())
+                result_key = 'done' if ok else 'faild to repack boot image'
+                qlog(f"\n*** {self.langget(result_key)} ***")
+                self._patch_ok[0] = ok
+            except Exception as e:
+                qlog(f"\n!!! patch error: {e}")
+                self._patch_ok[0] = False
+            finally:
+                self._patch_done.set()
+
+        DummyProcess(target=do_patch).start()
+        # Poll for completion on the main thread.
+        self.after(200, self._check_patch_complete)
+
+    def _check_patch_complete(self):
+        if not self._patch_done.is_set():
+            try:
+                self.after(200, self._check_patch_complete)
+            except Exception:
+                pass
+            return
+        ok = self._patch_ok[0]
+        self.title(TITLE + ("  \u2713" if ok else "  \u2717"))
+        self.progress_text.set("0%")
+        self.progress.set(0)
 
     def upload_local_apk(self):
         fname = ctk.filedialog.askopenfilename(
@@ -472,8 +613,8 @@ class MagiskPatcherUI(ctk.CTk):
                                          op.join("prebuilt", magisk), 
                                          self.isproxy.get(), 
                                          self.proxy.get(), 
-                                         self.progress, 
-                                         self)
+                                         _DualProgress(self.progress, self.progress_text), 
+                                         _QueueLogger(self._log_queue))
                 else:
                     print(self.langget('file exist, no need download'), file=self)
             self.magisk_select.set(f"- {self.langget('current magisk')} [{magisk}]")
@@ -540,8 +681,14 @@ class MagiskPatcherUI(ctk.CTk):
         self.bootimg.set(fname)
     
     def set_progress(self, value: int):
-        self.progress.set("%d" %value/100)
-        self.progress.trace_variable
+        # Backwards-compatible wrapper; updates both bar and percent text.
+        self._update_progress(value)
+
+    def _update_progress(self, pct: int):
+        if pct < 0: pct = 0
+        elif pct > 100: pct = 100
+        self.progress.set(pct)
+        self.progress_text.set(f"{pct}%")
 
     def set_log_level(self, value):
         self.log.setLevel(int(value))
@@ -611,7 +758,7 @@ class MagiskPatcherUI(ctk.CTk):
         self.lang_dict = getattr(Language, self.lang.get())
         self.magisk_select.set(self.langget('magisk is not select'))
         for i in self.magisk_list:
-            i.destory()
+            i.destroy()
         self.magisk_list = []
         self.__setup_widgets()
 

@@ -1,6 +1,7 @@
 from os import name as osname
 from sys import stderr
 import subprocess
+import time
 import requests
 import zipfile
 from multiprocessing.dummy import DummyProcess
@@ -32,6 +33,8 @@ def retTypeAndMachine():
         machine = 'x86'
     if machine == "amd64":
         machine = 'x86_64'
+    if machine in ("riscv64", "riscv64gc"):
+        machine = 'riscv64'
     return ostype, rel, machine
 
 def runcmd(cmd):
@@ -55,7 +58,7 @@ def checkUrl(url: str, timeout: int = 5) -> bool:
     try:
         r = requests.head(url, timeout=timeout, allow_redirects=True)
         return r.ok
-    except:
+    except requests.RequestException:
         return False
 
 def getReleaseList(url: str = DEFAULT_MAGISK_API_URL, isproxy: bool=False, proxyaddr: str="127.0.0.1:7890", isjsdelivr:bool=True, log=stderr):
@@ -67,10 +70,19 @@ def getReleaseList(url: str = DEFAULT_MAGISK_API_URL, isproxy: bool=False, proxy
         'http': f"{proxyaddr}",
         'https': f"{proxyaddr}",
     }
-    r = requests.get(url,
-                     proxies=proxies if isproxy else None,
-                     timeout=3)
-    if not r.ok:
+    # Retry with exponential backoff to survive transient network blips
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.get(url,
+                             proxies=proxies if isproxy else None,
+                             timeout=10)
+            if r.ok:
+                break
+        except requests.RequestException:
+            r = None
+        time.sleep(2 ** attempt)
+    if r is None or not r.ok:
         print(langget('get version faild, please check net or add proxy'), file=log)
         return {}
     data = r.json()
@@ -136,18 +148,21 @@ def convertVercode2Ver(value) -> str:
 
 def downloadFile(url: str, to: str, isproxy: bool = False, proxy:str="127.0.0.1:7890", progress=None, log=stderr):
     """
-    Can accept a ttk.ProgressBar as progress
+    Can accept a ttk.ProgressBar as progress (or any object with a .set(value) method)
+    The value is set as an integer percentage (0-100).
     """
     proxies = {
         'http': proxy,
         'https': proxy,
     }
     p = lambda now, total: int((now/total)*100) if total > 0 else 0
-    chunk_size = 10240
+    chunk_size = 262144  # 256 KiB - reduces write() syscalls ~25x vs 10 KiB
     try:
-        r = requests.get(url, stream=True, allow_redirects=True,
-                         proxies=proxies if isproxy else None)
-    except:
+        session = requests.Session()
+        r = session.get(url, stream=True, allow_redirects=True,
+                        proxies=proxies if isproxy else None,
+                        timeout=15)
+    except requests.RequestException:
         print(langget('internet connect faild or cannot connect target url'), file=log)
         return False
     if not r.ok:
@@ -156,14 +171,17 @@ def downloadFile(url: str, to: str, isproxy: bool = False, proxy:str="127.0.0.1:
     print(f"- {langget('start download')}[{url}] -> [{to}]", file=log)
     total_size = int(r.headers.get('content-length', 0))
     now = 0
-    with open(to, 'wb') as f:
-        for chunk in r.iter_content(chunk_size=chunk_size):
-            if chunk:
-                before = now
-                f.write(chunk)
-                now += chunk_size
-                if now > before and progress is not None:
-                    progress.set(p(now, total_size))
+    try:
+        with open(to, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=chunk_size):
+                if chunk:
+                    f.write(chunk)
+                    now += len(chunk)
+                    if progress is not None:
+                        progress.set(p(now, total_size))
+    finally:
+        r.close()
+        session.close()
     print(langget('download complete'), file=log)
     if progress is not None:
         progress.set(0)

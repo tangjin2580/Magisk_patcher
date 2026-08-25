@@ -82,7 +82,7 @@ class BootPatcher(object):
            "MAGISKBOOT_WINSUP_NOCASE": "1"
         }
 
-    def __execv(self, cmd:list, timeout:int=300):
+    def __execv(self, cmd:list, timeout:int=600):
         """
         Run magiskboot command, already include magiskboot
         return returncode and output
