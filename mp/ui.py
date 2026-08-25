@@ -9,6 +9,7 @@ from shutil import copyfile
 from sys import version as pyversion
 from sys import argv
 import sys
+import subprocess
 import webbrowser
 import logging
 from multiprocessing.dummy import DummyProcess
@@ -85,11 +86,11 @@ class _QueueLogger:
     def flush(self):
         pass
 
-VERSION = "4.1.0"
+VERSION = "4.2.0"
 AUTHOR = "affggh"
 TITLE = "Magisk Patcher v%s by %s" % (VERSION, AUTHOR)
-WIDTH = 900
-HEIGHT = 420
+WIDTH = 960
+HEIGHT = 580
 OS, REL, ARCH = utils.retTypeAndMachine()
 LICENSE = "GPLv3"
 INTRODUCE = """\
@@ -153,7 +154,7 @@ class MagiskPatcherUI(ctk.CTk):
         self.lang = ctk.StringVar(value=Language.supports[0])
         self.lang_dict = getattr(Language, self.lang.get())
 
-        self.logo = ctk.CTkImage(Image.open(BytesIO(_load_logo_bytes() or b''), "r"), size=(240, 100))
+        self.logo = ctk.CTkImage(Image.open(BytesIO(_load_logo_bytes() or b''), "r"), size=(220, 90))
         self.bootimg = ctk.StringVar()
         self.arch = ctk.StringVar()
         self.magisk_select = ctk.StringVar(value=self.langget('magisk is not select'))
@@ -195,6 +196,10 @@ class MagiskPatcherUI(ctk.CTk):
         self.magisk_list = []
 
         self.__setup_widgets()
+
+        # Live-update the arch status label when the user picks a different arch.
+        self.arch.trace_add('write', lambda *_: self.arch_status_label.configure(
+            text=self.langget('arch status') % (self.arch.get() or 'arm64')))
 
         # Start the queue-drain loop so workers can safely log to the UI.
         self.after(100, self._drain_log_queue)
@@ -251,8 +256,8 @@ class MagiskPatcherUI(ctk.CTk):
             self.textbox.insert('end', "".join(buf))
             # Cap to ~1000 lines to bound memory in long sessions
             line_count = int(self.textbox.index('end-1c').split('.')[0])
-            if line_count > 1000:
-                self.textbox.delete('1.0', f'{line_count - 1000}.0')
+            if line_count > 2000:
+                self.textbox.delete('1.0', f'{line_count - 2000}.0')
             self.textbox.yview('end')
         finally:
             self._log_buf.clear()
@@ -378,61 +383,104 @@ class MagiskPatcherUI(ctk.CTk):
 
         config_frame = ctk.CTkFrame(self.patcher_frame, corner_radius=5)
 
-        arch_select_label = ctk.CTkLabel(config_frame, text=self.langget('arch')+'\t')
+        # Smaller font for inline help text under each switch.
+        help_font = ctk.CTkFont(size=10)
+        help_color = ("gray50", "gray70")
+
+        def _labeled_switch(parent, text, variable, help_key, row, col):
+            """Create a switch with a one-line help label below it."""
+            switch = ctk.CTkSwitch(parent, text=text, variable=variable)
+            switch.grid(column=col, row=row, padx=5, pady=(5, 0), sticky='w')
+            help_lbl = ctk.CTkLabel(parent, text=self.langget(help_key),
+                                    text_color=help_color, font=help_font,
+                                    wraplength=140, justify='left')
+            help_lbl.grid(column=col, row=row+1, padx=(20, 5), pady=(0, 5), sticky='w')
+            return switch
+
+        arch_select_label = ctk.CTkLabel(config_frame, text=self.langget('arch') + ':',
+                                        font=ctk.CTkFont(weight='bold'))
         arch_select_button = ctk.CTkSegmentedButton(
             config_frame,
             values=["arm64", "arm", "x86_64", "x86"],
             corner_radius=50,
             variable=self.arch,
         )
-        arch_select_label.grid(column=0, row=0, padx=5, pady=5)
-        arch_select_button.grid(
-            column=1, columnspan=4, row=0, sticky="nsew", padx=5, pady=5
-        )
         arch_select_button.set("arm64")
+        arch_select_label.grid(column=0, row=0, padx=5, pady=5, sticky='e')
+        arch_select_button.grid(column=1, columnspan=4, row=0, sticky="nsew", padx=5, pady=5)
 
-        keep_verify_check = ctk.CTkSwitch(config_frame, text=self.langget('keep verity'), variable=self.keep_verity)
-        keep_verify_check.grid(column=1, row=1, padx=5, pady=5)
+        # Row 1: primary switches
+        _labeled_switch(config_frame, self.langget('keep verity'), self.keep_verity,
+                       'help keep verity', 1, 1)
+        _labeled_switch(config_frame, self.langget('keep encypt'), self.keep_forceencrypt,
+                       'help keep forceencrypt', 1, 2)
+        _labeled_switch(config_frame, self.langget('patch vbmeta flag'), self.patchvbmeta_flag,
+                       'help patch vbmeta flag', 1, 3)
+        _labeled_switch(config_frame, self.langget('recovery'), self.recoverymode,
+                       'help recovery', 1, 4)
 
-        keep_forceencrypt_check = ctk.CTkSwitch(config_frame, text=self.langget('keep encypt'), variable=self.keep_forceencrypt)
-        keep_forceencrypt_check.grid(column=2, row=1, padx=5, pady=5)
+        # Row 3: legacy sar spans width with help
+        _labeled_switch(config_frame, self.langget('legacy sar'), self.legacysar,
+                       'help legacy sar', 3, 1)
 
-        patch_vbmeta_flag = ctk.CTkSwitch(config_frame, text=self.langget('patch vbmeta flag'), variable=self.patchvbmeta_flag)
-        patch_vbmeta_flag.grid(column=3, row=1, padx=5, pady=5)
-
-        recovery_flag = ctk.CTkSwitch(config_frame, text=self.langget('recovery'), variable=self.recoverymode)
-        recovery_flag.grid(column=4, row=1, padx=5, pady=5)
-
-        legacy_sar_flag = ctk.CTkSwitch(config_frame, text=self.langget('legacy sar'), variable=self.legacysar)
-        legacy_sar_flag.grid(column=1, row=2, sticky='nsew', padx=5, pady=5, columnspan=4)
-
-        # Row 3: optional preinit device (Magisk v26.1+).
-        preinit_device_label = ctk.CTkLabel(config_frame, text=self.langget('preinit device'))
-        preinit_device_label.grid(column=1, row=3, padx=5, pady=5, sticky='e')
+        # Row 5: optional preinit device (Magisk v26.1+).
+        preinit_device_label = ctk.CTkLabel(config_frame, text=self.langget('preinit device'),
+                                            font=ctk.CTkFont(weight='bold'))
+        preinit_device_label.grid(column=1, row=5, padx=5, pady=5, sticky='e')
         preinit_device_entry = ctk.CTkEntry(config_frame,
                                             textvariable=self.preinit_device,
                                             placeholder_text=self.langget('preinit device placeholder'),
                                             width=140)
-        preinit_device_entry.grid(column=2, row=3, sticky='w', padx=5, pady=5)
+        preinit_device_entry.grid(column=2, row=5, sticky='w', padx=5, pady=5)
         preinit_device_hint = ctk.CTkLabel(config_frame,
                                            text=self.langget('preinit device hint'),
                                            text_color=('gray50', 'gray70'),
                                            font=ctk.CTkFont(size=11),
                                            wraplength=380,
                                            justify='left')
-        preinit_device_hint.grid(column=3, row=3, columnspan=2, sticky='w', padx=5, pady=5)
+        preinit_device_hint.grid(column=3, row=5, columnspan=2, sticky='w', padx=5, pady=5)
+        # "Read docs" link label - opens PREINITDEVICE.md in OS default handler.
+        preinit_doc_link = ctk.CTkLabel(config_frame,
+                                        text=self.langget('open doc') + " \U0001F4D6",
+                                        text_color=('blue', 'light blue'),
+                                        cursor='hand2',
+                                        font=ctk.CTkFont(size=11, underline=True))
+        preinit_doc_link.grid(column=3, row=6, columnspan=2, sticky='w', padx=5, pady=(0, 5))
+        preinit_doc_link.bind("<Button-1>",
+                              lambda _e: self._open_preinit_doc())
 
         config_frame.pack(side="top", fill="x", expand="no", padx=5, pady=5)
 
         confirm_frame = ctk.CTkFrame(self.patcher_frame, corner_radius=5)
-        confirm_info = ctk.CTkLabel(confirm_frame, textvariable=self.magisk_select)
-        confirm_info.pack(side="left", padx=5, pady=5, fill="x")
-        confirm_button = ctk.CTkButton(
-            confirm_frame, text=self.langget('start patch'), fg_color="green", hover_color="dark green", command=self.start_patch
-        )
-        confirm_button.pack(side="right", anchor="e", padx=5, pady=5)
+        # Left side: status panel (selected APK, arch, preinit hint).
+        confirm_left = ctk.CTkFrame(confirm_frame, fg_color='transparent')
+        self.apk_status_label = ctk.CTkLabel(confirm_left,
+                                             text=self.langget('no apk selected'),
+                                             text_color=('gray40', 'gray60'),
+                                             font=ctk.CTkFont(size=12),
+                                             anchor='w')
+        self.apk_status_label.pack(side='top', fill='x', padx=5, pady=(5, 0))
+        self.arch_status_label = ctk.CTkLabel(confirm_left,
+                                              text=self.langget('arch status') % (self.arch.get() or 'arm64'),
+                                              text_color=('gray40', 'gray60'),
+                                              font=ctk.CTkFont(size=11),
+                                              anchor='w')
+        self.arch_status_label.pack(side='top', fill='x', padx=5, pady=(0, 5))
+        confirm_left.pack(side='left', fill='x', expand='yes')
 
-        confirm_frame.pack(side="top", fill="x", padx=5, pady=5)
+        # Right side: action buttons.
+        textbox_clear_button = ctk.CTkButton(confirm_frame, text=self.langget('clean'),
+                                              command=lambda: self.textbox.delete('1,0', 'end'))
+        textbox_clear_button.pack(side='right', padx=5, pady=5)
+        confirm_button = ctk.CTkButton(
+            confirm_frame, text=self.langget('start patch'),
+            fg_color='green', hover_color='dark green',
+            width=140, height=36,
+            command=self.start_patch,
+        )
+        confirm_button.pack(side='right', anchor='e', padx=5, pady=5)
+
+        confirm_frame.pack(side='top', fill='x', padx=5, pady=5)
 
         progress_frame = ctk.CTkFrame(self, corner_radius=0)
         self.progress_label = ctk.CTkLabel(progress_frame, text=self.langget('progress')+":")
@@ -451,7 +499,8 @@ class MagiskPatcherUI(ctk.CTk):
 
         # keep_verity_checkbox = ctk.CTkCheckBox(self.patcher)
 
-        self.textbox = ctk.CTkTextbox(self.patcher_frame, border_width=0, corner_radius=20, font=ctk.CTkFont("console"))
+        self.textbox = ctk.CTkTextbox(self.patcher_frame, border_width=0, corner_radius=20,
+                                  font=ctk.CTkFont(family='Consolas', size=11))
         self.textbox.pack(side='top', fill='both', padx=5, pady=5, expand='yes')
 
         textbox_clear_button = ctk.CTkButton(confirm_frame, text=self.langget('clean'), command=lambda: self.textbox.delete(1.0, 'end'))
@@ -615,6 +664,7 @@ class MagiskPatcherUI(ctk.CTk):
             copyfile(fname, dest)
         self.magisk_select_int.set(op.basename(fname))
         self.magisk_select.set(f"- {self.langget('current magisk')} [{op.basename(fname)}]")
+        self.apk_status_label.configure(text=self.langget('apk status') % op.basename(fname))
         print(f"- {self.langget('upload local apk done')}[{dest}]", file=self)
         self.change_frame_patcher()
 
@@ -640,6 +690,7 @@ class MagiskPatcherUI(ctk.CTk):
                 else:
                     print(self.langget('file exist, no need download'), file=self)
             self.magisk_select.set(f"- {self.langget('current magisk')} [{magisk}]")
+            self.apk_status_label.configure(text=self.langget('apk status') % magisk)
             self.change_frame_patcher()
 
         print(self.langget('refresh magisk list'), file=self)
@@ -701,6 +752,28 @@ class MagiskPatcherUI(ctk.CTk):
     def file_choose_dialog(self):
         fname = ctk.filedialog.askopenfilename(title=self.langget('select a boot image'), initialdir=getcwd())
         self.bootimg.set(fname)
+
+    def _open_preinit_doc(self):
+        """Open PREINITDEVICE.md in the OS default handler (browser or editor)."""
+        # Locate the doc file (works both in dev mode and inside a PyInstaller bundle).
+        candidates = [
+            op.join(bundle_dir(), 'PREINITDEVICE.md'),
+            op.join(getcwd(), 'PREINITDEVICE.md'),
+        ]
+        for p in candidates:
+            if op.isfile(p):
+                try:
+                    if osname == 'nt':
+                        os.startfile(p)  # type: ignore[attr-defined]
+                    elif sys.platform == 'darwin':
+                        subprocess.Popen(['open', p])
+                    else:
+                        subprocess.Popen(['xdg-open', p])
+                    return
+                except Exception as e:
+                    print(f"Cannot open {p}: {e}", file=self)
+                    return
+        print("PREINITDEVICE.md not found", file=self)
     
     def set_progress(self, value: int):
         # Backwards-compatible wrapper; updates both bar and percent text.
