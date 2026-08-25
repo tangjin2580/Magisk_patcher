@@ -17,3 +17,6 @@ dist/*
 
 .vscode
 bin/magiskboot
+.cowork-e2e*
+.cowork-temp
+prebuilt/
