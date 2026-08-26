@@ -86,7 +86,7 @@ class _QueueLogger:
     def flush(self):
         pass
 
-VERSION = "4.2.0"
+VERSION = "4.2.1"
 TITLE = "Magisk Patcher v%s" % VERSION
 WIDTH = 960
 HEIGHT = 580
