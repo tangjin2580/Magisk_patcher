@@ -86,7 +86,7 @@ class _QueueLogger:
     def flush(self):
         pass
 
-VERSION = "4.2.2"
+VERSION = "4.2.3"
 TITLE = "Magisk Patcher v%s" % VERSION
 WIDTH = 960
 HEIGHT = 580
@@ -630,26 +630,27 @@ class MagiskPatcherUI(ctk.CTk):
         self.change_frame_patcher()
 
     def refresh_magisk(self):
-        def download(magisk: str):
-            if not self.uselocal.get():
-                if not op.isdir(op.join("prebuilt")):
+        def download(magisk: str, src_url: str = ""):
+            # If the apk is not in prebuilt yet, fetch it from the online list.
+            if not op.isfile(op.join("prebuilt", magisk)):
+                if not op.isdir("prebuilt"):
                     makedirs("prebuilt", exist_ok=True)
 
-                if not op.isfile(op.join("prebuilt", magisk)):
-                    print(f"{self.langget('file not exist, ready to download')} [{magisk}]", file=self)
+                print(f"{self.langget('file not exist, ready to download')} [{magisk}]", file=self)
+                if src_url:
                     if not self.isjsdelivr.get() and self.ismirror.get():
                         print(self.langget('use mirror download'), file=self)
-                        url = magisk_list[magisk].replace(self.mirror.get().rstrip('/'), "https://github.com")
+                        url = src_url.replace(self.mirror.get().rstrip('/'), "https://github.com")
                     else:
-                        url = magisk_list[magisk]
-                    utils.thdownloadFile(url, 
-                                         op.join("prebuilt", magisk), 
-                                         self.isproxy.get(), 
-                                         self.proxy.get(), 
-                                         _DualProgress(self.progress, self.progress_text), 
+                        url = src_url
+                    utils.thdownloadFile(url,
+                                         op.join("prebuilt", magisk),
+                                         self.isproxy.get(),
+                                         self.proxy.get(),
+                                         _DualProgress(self.progress, self.progress_text),
                                          _QueueLogger(self._log_queue))
-                else:
-                    print(self.langget('file exist, no need download'), file=self)
+            else:
+                print(self.langget('file exist, no need download'), file=self)
             self.magisk_select.set(f"- {self.langget('current magisk')} [{magisk}]")
             self.apk_status_label.configure(text=self.langget('apk status') % magisk)
             self.change_frame_patcher()
@@ -661,47 +662,58 @@ class MagiskPatcherUI(ctk.CTk):
             i.destroy()
         self.magisk_list = []
 
+        # Local apks in the prebuilt dir.
+        local_list = []
         if self.uselocal.get():
             print(self.langget('use from local prebuilt dir'), file=self)
             if not op.isdir("prebuilt"):
                 print(self.langget('no magisk in prebuilt, please downloadn and place'), file=self)
                 print(f"\t{self.langget('work dir')}: {getcwd()}", file=self)
                 makedirs("prebuilt", exist_ok=True)
-                
-            magisk_list = []
-            
+
             for root, dirs, files in walk("prebuilt"):
                 for file in files:
                     if ".apk" in file:
-                        magisk_list.append(file)
+                        local_list.append(file)
 
-            if magisk_list.__len__() == 0:
+            if not local_list:
                 print(self.langget('cannot find any apk, please download and put them into prebuilt dir'), file=self)
-                self.change_frame_patcher()
 
-            for index, current in enumerate(magisk_list):
+        # Fall back to the online release list when there is nothing local.
+        online_list = {}
+        if not local_list:
+            print(self.langget('load online list'), file=self)
+            online_list = utils.getReleaseList(
+                url=utils.DEFAULT_MAGISK_API_URL if not self.usedeltamagisk.get() else utils.DELTA_MAGISK_API_URL,
+                isproxy=self.isproxy.get(),
+                proxyaddr=self.proxy.get(),
+                isjsdelivr=self.isjsdelivr.get(),
+                log=self.log)
+
+        if local_list:
+            for current in local_list:
                 self.magisk_list.append(
-                    ctk.CTkRadioButton(self.download_list_frame, 
-                                       text=current, 
+                    ctk.CTkRadioButton(self.download_list_frame,
+                                       text=current,
                                        command=lambda x=current: download(x),
-                                       value=current, 
+                                       value=current,
                                        variable=self.magisk_select_int)
                 )
-    
-        else:
-            magisk_list = utils.getReleaseList(url=utils.DEFAULT_MAGISK_API_URL if not self.usedeltamagisk.get() else utils.DELTA_MAGISK_API_URL,
-                                               isproxy=self.isproxy.get(),
-                                               proxyaddr=self.proxy.get(),
-                                               isjsdelivr=self.isjsdelivr.get(),
-                                               log=self.log)
-            for index, current in enumerate(magisk_list):
+        elif online_list:
+            for current in online_list:
                 self.magisk_list.append(
-                    ctk.CTkRadioButton(self.download_list_frame, 
-                                       text=current, 
-                                       command=lambda x=current: download(x), 
-                                       value=current, 
+                    ctk.CTkRadioButton(self.download_list_frame,
+                                       text=current,
+                                       command=lambda x=current: download(x, online_list[x]),
+                                       value=current,
                                        variable=self.magisk_select_int)
                 )
+        else:
+            hint = ctk.CTkLabel(self.download_list_frame,
+                                text=self.langget('no magisk list available'),
+                                text_color=("gray50", "gray70"),
+                                wraplength=300, justify='left')
+            self.magisk_list.append(hint)
 
         # place all widgets
         for i in self.magisk_list:
@@ -790,6 +802,7 @@ class MagiskPatcherUI(ctk.CTk):
 
     def change_frame_download(self):
         self._change_frame_byname("download")
+        self.refresh_magisk()
 
     def ui_scaling_event(self, value):
         ctk.set_widget_scaling(float(value))

@@ -62,6 +62,8 @@ class Language:
         'no magisk in prebuilt, please downloadn and place': "- 没有找到magisk安装包，请手动下载后放置在工作目录下",
         'work dir': "工作目录",
         'cannot find any apk, please download and put them into prebuilt dir':"- 没有在本地目录找到任何安装包，请手动下载后放入prebuilt目录",
+        'load online list': "- 从网络获取可用magisk列表",
+        'no magisk list available': "暂无可用magisk列表（本地prebuilt目录为空且网络获取失败），可点击\"上传本地APK\"添加",
         'select a boot image': "选择一个boot镜像",
 
         'get version faild, please check net or add proxy': "获取版本失败，请检查网络或尝试添加代理...",
@@ -162,6 +164,8 @@ class Language:
         'no magisk in prebuilt, please downloadn and place': "- Cannot find magisk apk, please download and put into prebuilt dir",
         'work dir': "WorkDir",
         'cannot find any apk, please download and put them into prebuilt dir':"- Cannot find any magisk apk in prebuilt, please downlaod and put into prebuilt dir",
+        'load online list': "- Fetching available magisk list from network",
+        'no magisk list available': "No magisk list available (prebuilt dir is empty and network fetch failed). You can use \"Upload Local APK\" instead.",
         'select a boot image': "Select a boot image",
 
         'get version faild, please check net or add proxy': "Get Releases failed, please try to redownload or add proxy...",
