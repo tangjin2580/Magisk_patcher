@@ -86,7 +86,7 @@ class _QueueLogger:
     def flush(self):
         pass
 
-VERSION = "4.2.1"
+VERSION = "4.2.2"
 TITLE = "Magisk Patcher v%s" % VERSION
 WIDTH = 960
 HEIGHT = 580
@@ -135,7 +135,13 @@ class MagiskPatcherUI(ctk.CTk):
         self.lang = ctk.StringVar(value=Language.supports[0])
         self.lang_dict = getattr(Language, self.lang.get())
 
-        self.logo = ctk.CTkImage(Image.open(BytesIO(_load_logo_bytes() or b''), "r"), size=(220, 90))
+        _logo_src = Image.open(BytesIO(_load_logo_bytes() or b""))
+        _logo_w, _logo_h = _logo_src.size
+        # Keep the source aspect ratio; scale to a fixed display height of 90 px
+        # so the logo is never stretched.
+        _LOGO_DISPLAY_H = 90
+        _LOGO_DISPLAY_W = max(1, round(_logo_w * _LOGO_DISPLAY_H / _logo_h))
+        self.logo = ctk.CTkImage(_logo_src, size=(_LOGO_DISPLAY_W, _LOGO_DISPLAY_H))
         self.bootimg = ctk.StringVar()
         self.arch = ctk.StringVar()
         self.magisk_select = ctk.StringVar(value=self.langget('magisk is not select'))
