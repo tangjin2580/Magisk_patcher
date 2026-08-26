@@ -784,7 +784,6 @@ class MagiskPatcherUI(ctk.CTk):
 
     def change_frame_download(self):
         self._change_frame_byname("download")
-        self._change_frame_byname("other")
 
     def ui_scaling_event(self, value):
         ctk.set_widget_scaling(float(value))
