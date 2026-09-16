@@ -114,26 +114,42 @@ magisk_patcher/
 
 `mp/boot_patch.py` shells out to the `magiskboot` binary. The flow:
 
-1. **unpack** — extract kernel, ramdisk, dtb, etc. from the input image.
-2. **cpio test** — decide whether the input is stock (status 0), already
+1. **Detect image type** — read the `ANDROID!` / `VNDRBOOT` header and classify the
+   input as `boot`, `init_boot` or `vendor_boot`. The detected type is shown in the
+   status panel and the log.
+2. **unpack** — extract kernel, ramdisk, dtb, etc. from the input image.
+3. **cpio test** — decide whether the input is stock (status 0), already
    Magisk-patched (status 1, restore backup first), or unsupported (status 2).
-3. **Backup** — copy the original init to `/.backup/init.xz` (xz-compressed).
-4. **Add Magisk components** — `magiskinit`, `magisk.xz`, `stub.xz`,
+4. **Backup** — copy the original init to `/.backup/init.xz` (xz-compressed).
+5. **Add Magisk components** — `magiskinit`, `magisk.xz`, `stub.xz`,
    `init-ld.xz` into the ramdisk.
-5. **Patch ramdisk** — `magiskboot cpio patch` modifies init to load magiskinit.
-6. **Patch kernel** (boot-only) — `hexpatch` to disable Samsung PROCA and
+6. **Patch ramdisk** — `magiskboot cpio patch` modifies init to load magiskinit.
+7. **Patch kernel** (boot-only) — `hexpatch` to disable Samsung PROCA and
    patch `skip_initramfs` for legacy SAR.
-7. **Patch dtb fstab** — strip verity/forceencrypt if the option is off.
-8. **Write `.backup/.magisk`** — config file (LF-only) with the patch
+8. **Patch dtb fstab** — strip verity/forceencrypt if the option is off.
+9. **Write `.backup/.magisk`** — config file (LF-only) with the patch
    options, VENDORBOOT flag, optional PREINITDEVICE, and the SHA1 of the
    original boot image.
-9. **repack** — `magiskboot repack` rebuilds the boot image, preserving the
-   original AVB footer & vbmeta blob (only `vbmeta_offset` in the footer is
-   updated to point to the relocated vbmeta).
-10. **Save** — copy `new-boot.img` to `~/Downloads/patched-<orig-name>.img`.
+10. **repack** — `magiskboot repack` rebuilds the boot image, preserving the
+    original AVB footer & vbmeta blob (only `vbmeta_offset` in the footer is
+    updated to point to the relocated vbmeta).
+11. **Save** — copy `new-boot.img` to `~/Downloads/patched-<orig-name>.img`.
 
 The output matches what the official Magisk app's `magiskboot cpio patch`
 emits, byte for byte for all Magisk components.
+
+### Boot image types
+
+| Type | Header | Kernel | Handled as |
+|---|---|---|---|
+| `boot` | `ANDROID!` | yes | Kernel hexpatched, ramdisk patched |
+| `init_boot` | `ANDROID!`, version ≥ 3 | no | Ramdisk only, kernel untouched |
+| `vendor_boot` | `VNDRBOOT` | no | Ramdisk only (`vendor_ramdisk/*.cpio`) |
+
+`init_boot` images (Android 13+) are kernel-less: they only carry the generic
+ramdisk. The patcher detects this from the header (`header_version >= 3` with
+`kernel_size == 0`) and skips the kernel-patching stage automatically, so no
+special option needs to be enabled. Sparse-wrapped images are detected as well.
 
 ---
 

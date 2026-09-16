@@ -14,6 +14,38 @@ from .lang import Language, langget
 DEFAULT_MAGISK_API_URL = "https://api.github.com/repos/topjohnwu/Magisk/releases"
 DELTA_MAGISK_API_URL = "https://api.github.com/repos/HuskyDG/magisk-files/releases"
 
+ANDROID_MAGIC = b"ANDROID!"
+VENDOR_BOOT_MAGIC = b"VNDRBOOT"
+
+def detectImageType(path: str) -> str:
+    """
+    Classify a boot image by its header. Returns one of:
+    'boot', 'init_boot', 'vendor_boot' or 'unknown'.
+
+    Android boot image header fields used (little-endian, same offsets for
+    every header version):
+        offset  8: kernel_size
+        offset 40: header_version
+    An init_boot image is a header v3/v4 image with no kernel (its ramdisk is
+    the generic ramdisk), while a boot image always carries a kernel.
+    """
+    try:
+        with open(path, "rb") as f:
+            buf = f.read(65536)
+    except OSError:
+        return "unknown"
+    a = buf.find(ANDROID_MAGIC)
+    v = buf.find(VENDOR_BOOT_MAGIC)
+    if v != -1 and (a == -1 or v < a):
+        return "vendor_boot"
+    if a == -1 or a + 44 > len(buf):
+        return "unknown"
+    header_version = int.from_bytes(buf[a + 40:a + 44], "little")
+    kernel_size = int.from_bytes(buf[a + 8:a + 12], "little")
+    if header_version >= 3 and kernel_size == 0:
+        return "init_boot"
+    return "boot"
+
 def retTypeAndMachine():
     # Detect machine and ostype
     ostype = platform.system().lower()

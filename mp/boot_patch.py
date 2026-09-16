@@ -7,6 +7,7 @@ from os.path import isfile, isdir, basename, join, expanduser
 import logging
 from shutil import copyfile, rmtree
 
+from . import utils
 from .lang import Language, langget
 
 def get_download_dir():
@@ -66,6 +67,9 @@ class BootPatcher(object):
         self.log = log
 
         self.vendor_boot = False
+        # Working copy of the input image used for magiskboot invocations; see
+        # patch() for why the original path cannot always be used directly.
+        self._workimg = None
 
         self.__check()
         self.__prepare_env()
@@ -154,10 +158,28 @@ class BootPatcher(object):
         if not isfile(bootimg):
             print(langget('boot image does not exist'), file=self.log)
             return False
-        
+
+        # Detect the image type up front so init_boot (kernel-less) images are
+        # handled explicitly instead of being treated as a broken boot image.
+        image_type = utils.detectImageType(bootimg)
+        print(langget('detect image type') % image_type, file=self.log)
+        if image_type == 'init_boot':
+            print(langget('init boot note'), file=self.log)
+
+        # magiskboot repack always writes its result to new-boot.img in the
+        # current working directory. When the selected input is itself named
+        # new-boot.img (e.g. re-patching a previous output) the read and write
+        # paths are the same file and repack fails. Patch a private copy so the
+        # input name never collides with magiskboot's output files.
+        workimg = bootimg
+        if basename(bootimg).lower() == "new-boot.img":
+            workimg = "boot_input.img"
+            cp(bootimg, workimg)
+            self._workimg = workimg
+
         # Unpack bootimg
         print(langget('unpack boot image'), file=self.log)
-        err, ret = self.__execv(["unpack", bootimg])
+        err, ret = self.__execv(["unpack", workimg])
         logging.info(ret)
 
         match err:
@@ -183,11 +205,11 @@ class BootPatcher(object):
         match (status & 3):
             case 0: # Stock boot
                 print(langget('detect original boot'), file=self.log)
-                err, ret = self.__execv(["sha1", bootimg])
+                err, ret = self.__execv(["sha1", workimg])
                 if err == 0:
                     lines = [l.strip() for l in ret.splitlines() if l.strip()]
                     sha = lines[0] if lines else ""
-                cp(bootimg, "stock_boot.img")
+                cp(workimg, "stock_boot.img")
                 cp(ramdisk, "ramdisk.cpio.orig")
             case 1: # Magisk patched
                 print(langget('detect magisk patched boot'), file=self.log)
@@ -298,7 +320,7 @@ class BootPatcher(object):
 
         print(langget('repack boot image'), file=self.log)
         err, _ = self.__execv([
-            "repack", bootimg
+            "repack", workimg
         ])
         if err != 0:
             print(langget('faild to repack boot image'), file=self.log)
@@ -309,7 +331,7 @@ class BootPatcher(object):
         # vbmeta_offset; the original_image_size field must still describe
         # the *original* image size (not the patched one). If a future
         # magiskboot changes this behaviour, we want to know.
-        self.__verify_footer(bootimg)
+        self.__verify_footer(workimg)
 
         self.cleanup()
         print(langget('done'), file=self.log)
@@ -346,6 +368,11 @@ class BootPatcher(object):
         rmlist = [
         "magisk", "magisk.xz", "magiskinit", "stub.apk", "stub.xz", "init-ld", "init-ld.xz"
         ]
+        # Remove the private input copy created when the selected image was
+        # named new-boot.img (see patch()).
+        if self._workimg:
+            rmlist.append(self._workimg)
+            self._workimg = None
         rm(*rmlist)
         print(langget('cleanup'), file=self.log)
         self.__execv(["cleanup"])

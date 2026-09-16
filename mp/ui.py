@@ -85,6 +85,9 @@ class _QueueLogger:
             pass
     def flush(self):
         pass
+    # Allow both `print(..., file=qlog)` and `qlog("...")` call styles.
+    def __call__(self, *args):
+        self.write(*args)
 
 VERSION = "4.2.3"
 TITLE = "Magisk Patcher v%s" % VERSION
@@ -423,8 +426,14 @@ class MagiskPatcherUI(ctk.CTk):
         config_frame.pack(side="top", fill="x", expand="no", padx=5, pady=5)
 
         confirm_frame = ctk.CTkFrame(self.patcher_frame, corner_radius=5)
-        # Left side: status panel (selected APK, arch, preinit hint).
+        # Left side: status panel (image type, selected APK, arch).
         confirm_left = ctk.CTkFrame(confirm_frame, fg_color='transparent')
+        self.image_status_label = ctk.CTkLabel(confirm_left,
+                                               text=self._image_status_text(),
+                                               text_color=('gray40', 'gray60'),
+                                               font=ctk.CTkFont(size=12),
+                                               anchor='w')
+        self.image_status_label.pack(side='top', fill='x', padx=5, pady=(5, 0))
         self.apk_status_label = ctk.CTkLabel(confirm_left,
                                              text=self.langget('no apk selected'),
                                              text_color=('gray40', 'gray60'),
@@ -481,7 +490,7 @@ class MagiskPatcherUI(ctk.CTk):
         self.download_list_frame = ctk.CTkScrollableFrame(self.download_frame, corner_radius=5, label_text=self.langget('available magisk list'))
         download_config_frame = ctk.CTkFrame(self.download_frame, corner_radius=5)
 
-        download_setting_label = ctk.CTkButton(download_config_frame, state='disable', text=self.langget('settints'), fg_color=('grey78', 'grey23'), text_color=('black', 'grey85'), width=200)
+        download_setting_label = ctk.CTkButton(download_config_frame, state='disable', text=self.langget('settings'), fg_color=('grey78', 'grey23'), text_color=('black', 'grey85'), width=200)
         download_setting_label.pack(side='top', fill='x', padx=5, pady=5)
 
         download_proxy_frame = ctk.CTkFrame(download_config_frame)
@@ -552,9 +561,11 @@ class MagiskPatcherUI(ctk.CTk):
         self._change_frame_byname("patcher")
 
     def start_patch(self):
-        if not op.isfile(self.bootimg.get()):
+        bootimg = self.bootimg.get()
+        if not op.isfile(bootimg):
             print(self.langget('please select a exist boot image'), file=self)
             return
+        self._refresh_image_status()
 
         apk_name = self.magisk_select_int.get()
         if not apk_name:
@@ -565,6 +576,16 @@ class MagiskPatcherUI(ctk.CTk):
             print(self.langget('please select a valid magisk apk'), file=self)
             return
 
+        # Snapshot every Tk variable on the main thread: Tk is not thread-safe,
+        # so the worker must not touch widgets/variables directly.
+        arch = self.arch.get()
+        keep_verity = self.keep_verity.get()
+        keep_forceencrypt = self.keep_forceencrypt.get()
+        patchvbmeta_flag = self.patchvbmeta_flag.get()
+        recoverymode = self.recoverymode.get()
+        legacysar = self.legacysar.get()
+        preinit_device = self.preinit_device.get().strip()
+
         # Reset completion state.
         self._patch_done.clear()
         self._patch_ok[0] = False
@@ -574,20 +595,21 @@ class MagiskPatcherUI(ctk.CTk):
             qlog = _QueueLogger(self._log_queue)
             try:
                 magisk_version = utils.getMagiskApkVersion(apk_path)
-                qlog(f"{self.langget('detect select magisk version is')} [{str(utils.convertVercode2Ver(magisk_version))}]")
+                ver = utils.convertVercode2Ver(magisk_version) if magisk_version else "unknown"
+                qlog(f"{self.langget('detect select magisk version is')} [{ver}]")
 
-                utils.parseMagiskApk(apk_path, arch=self.arch.get(), log=qlog)
+                utils.parseMagiskApk(apk_path, arch=arch, log=qlog)
 
                 patcher = boot_patch.BootPatcher(prebuilt_magiskboot,
-                                                 self.keep_verity.get(),
-                                                 self.keep_forceencrypt.get(),
-                                                 self.patchvbmeta_flag.get(),
-                                                 self.recoverymode.get(),
-                                                 self.legacysar.get(),
+                                                 keep_verity,
+                                                 keep_forceencrypt,
+                                                 patchvbmeta_flag,
+                                                 recoverymode,
+                                                 legacysar,
                                                  self.progress,
                                                  qlog,
-                                                 preinit_device=self.preinit_device.get().strip())
-                ok = patcher.patch(self.bootimg.get())
+                                                 preinit_device=preinit_device)
+                ok = patcher.patch(bootimg)
                 result_key = 'done' if ok else 'faild to repack boot image'
                 qlog(f"\n*** {self.langget(result_key)} ***")
                 self._patch_ok[0] = ok
@@ -722,9 +744,25 @@ class MagiskPatcherUI(ctk.CTk):
     def change_theme(self, theme: str):
         ctk.set_appearance_mode(theme)
 
+    def _image_status_text(self) -> str:
+        path = self.bootimg.get()
+        if path and op.isfile(path):
+            return self.langget('image type') + ": " + utils.detectImageType(path)
+        return self.langget('image type') + ": -"
+
+    def _refresh_image_status(self):
+        try:
+            self.image_status_label.configure(text=self._image_status_text())
+        except Exception:
+            pass
+
     def file_choose_dialog(self):
-        fname = ctk.filedialog.askopenfilename(title=self.langget('select a boot image'), initialdir=getcwd())
+        fname = ctk.filedialog.askopenfilename(
+            title=self.langget('select a boot image'),
+            initialdir=getcwd(),
+            filetypes=[("Boot image", "*.img"), ("All files", "*.*")])
         self.bootimg.set(fname)
+        self._refresh_image_status()
 
     def _open_preinit_doc(self):
         """Open PREINITDEVICE.md in the OS default handler (browser or editor)."""

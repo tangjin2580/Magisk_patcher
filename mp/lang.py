@@ -7,6 +7,7 @@ class Language:
     zh_CN = {
         'Home': "主页",
         'boot img': "boot镜像",
+        'image type': "镜像类型",
         'choose file': "选择文件",
         'arch': "架构",
         'keep verity': "保持验证",
@@ -86,6 +87,8 @@ class Language:
         'saved to download dir': "- 已保存到下载目录: %s",
         'save to download dir failed': "- 保存到下载目录失败: %s",
         'check ramdisk status': "- 检查ramdisk状态",
+        'detect image type': "- 检测到镜像类型: %s",
+        'init boot note': "- init_boot 镜像：无内核，仅修补 ramdisk（内核保持原样）",
         'detect original boot': "- 检测到原始未修改的boot镜像",
         'detect magisk patched boot': "- 检测到经过magisk修补过的boot镜像",
         'boot patched by unknow program': "- boot镜像被未知的程序修改过",
@@ -109,6 +112,7 @@ class Language:
     en_US = {
         'Home': "Home",
         'boot img': "Boot Image",
+        'image type': "Image type",
         'choose file': "ChooseFile",
         'arch': "Arch",
         'keep verity': "Keep Verity",
@@ -188,6 +192,8 @@ class Language:
         'saved to download dir': "- Saved to download directory: %s",
         'save to download dir failed': "- Failed to save to download directory: %s",
         'check ramdisk status': "- Checking ramdisk status",
+        'detect image type': "- Detected image type: %s",
+        'init boot note': "- init_boot image: no kernel, patching ramdisk only (kernel left unchanged)",
         'detect original boot': "- Stock boot image detected",
         'detect magisk patched boot': "- Magisk patched boot image detected",
         'boot patched by unknow program': "- Boot image patched by unsupported programs",
