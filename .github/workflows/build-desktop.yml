@@ -101,13 +101,34 @@ jobs:
 
       - name: Verify build output
         shell: bash
-        run: ls -la dist/
+        run: |
+          ls -la dist/ || true
+          case "${{ matrix.name }}" in
+            Windows)
+              test -f dist/MagiskPatcher.exe
+              ;;
+            Linux)
+              test -f dist/MagiskPatcher
+              ;;
+            macOS)
+              test -d dist/MagiskPatcher.app -o -f dist/MagiskPatcher
+              ;;
+          esac
 
       - name: Package macOS app
         if: runner.os == 'macOS'
+        shell: bash
         run: |
           cd dist
-          zip -r MagiskPatcher-macos.zip MagiskPatcher.app
+          if [ -d MagiskPatcher.app ]; then
+            zip -r MagiskPatcher-macos.zip MagiskPatcher.app
+          elif [ -f MagiskPatcher ]; then
+            zip -r MagiskPatcher-macos.zip MagiskPatcher
+          else
+            echo "No macOS build output found"
+            ls -la
+            exit 1
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

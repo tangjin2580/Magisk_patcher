@@ -1,8 +1,18 @@
 # DEPRECATED: multi-platform build moved to build-desktop.yml.
-# Keep this file only for history; it never triggers anymore.
+# Keep this file only for history. GitHub treats `on: {}` as an invalid
+# workflow and marks every push as failed, so use a never-matching trigger.
 name: Build Windows EXE (deprecated)
 
-on: {}
+on:
+  workflow_dispatch:
+    inputs:
+      unused:
+        description: 'Deprecated workflow; do not run'
+        required: false
+        default: 'noop'
+  push:
+    tags:
+      - 'never-match-deprecated-windows-workflow'
 
 permissions:
   contents: write
